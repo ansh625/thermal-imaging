@@ -1,33 +1,50 @@
-import axios from 'axios';
+import axios from "axios";
 
-const API_URL = 'http://localhost:8000/api';
-
-const api = axios.create({
-  baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+const API = axios.create({
+  baseURL: "http://localhost:8000",
 });
 
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
+// LOGIN (OAuth2 compliant)
 export const authAPI = {
-  signup: (data) => api.post('/auth/signup', null, { params: data }),
-  login: (data) => api.post('/auth/login', new URLSearchParams(data), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-  }),
-  getMe: () => api.get('/auth/me'),
-};
+  login: ({ username, password }) => {
+    const formData = new URLSearchParams();
+    formData.append("username", username);
+    formData.append("password", password);
 
+    return API.post("/api/auth/login", formData, {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+    });
+  },
+
+  signup: (data) =>
+    API.post("/api/auth/signup", data),
+
+  me: (token) =>
+    API.get("/api/auth/me", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }),
+};
+// ================= CAMERA =================
 export const cameraAPI = {
-  connect: (data) => api.post('/camera/connect', null, { params: data }),
-  disconnect: (data) => api.post('/camera/disconnect', null, { params: data }),
-};
+  connect: (data, token) =>
+    API.post("/api/camera/connect", data, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }),
 
-export default api;
+  disconnect: (session_id, token) =>
+    API.post(
+      "/api/camera/disconnect",
+      { session_id },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    ),
+};
