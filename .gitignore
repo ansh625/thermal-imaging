@@ -2,10 +2,12 @@
 venv/
 __pycache__/
 *.pyc
+
+#Env
 .env
 
 # Node
-node_modules/
+frontend/node_modules/
 dist/
 
 # Logs
@@ -15,4 +17,6 @@ dist/
 .DS_Store
 Thumbs.db
 
+#Editor
+.vscode/
 .history/
