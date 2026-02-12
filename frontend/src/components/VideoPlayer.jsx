@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useCameraStore } from '../store/cameraStore';
-import { io } from 'socket.io-client';
+// import { io } from 'socket.io-client';
 
 export default function VideoPlayer() {
   const { sessionId, currentFrame, setFrame } = useCameraStore();
