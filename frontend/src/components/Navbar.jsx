@@ -1,6 +1,8 @@
 import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { Activity } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+const location = useLocation();
 
 import NotificationCenter from './NotificationCenter';
 import ProfileDropdown from './ProfileDropdown';
@@ -58,21 +60,50 @@ export default function Navbar() {
 
       {/* Sub-navigation */}
       <div className="px-6 py-2 border-t border-secondary-700/30 bg-dark-500/50">
-        <div className="flex items-center gap-6 text-sm">
-          <button className="text-primary-400 font-medium border-b-2 border-primary-400 pb-1">
-            Dashboard
-          </button>
-          <button className="text-gray-400 hover:text-white transition-colors pb-1">
-            Cameras
-          </button>
-          <button className="text-gray-400 hover:text-white transition-colors pb-1">
-            Recordings
-          </button>
-          <button className="text-gray-400 hover:text-white transition-colors pb-1">
-            Analytics
-          </button>
-        </div>
-      </div>
-    </nav>
-  );
+  <div className="flex items-center gap-6 text-sm">
+    <button 
+      onClick={() => navigate('/dashboard')}
+      className={`font-medium pb-1 transition-colors ${
+        location.pathname === '/dashboard' 
+          ? 'text-primary-400 border-b-2 border-primary-400' 
+          : 'text-gray-400 hover:text-white'
+      }`}
+    >
+      Dashboard
+    </button>
+    <button 
+      onClick={() => navigate('/cameras')}
+      className={`font-medium pb-1 transition-colors ${
+        location.pathname === '/cameras' 
+          ? 'text-primary-400 border-b-2 border-primary-400' 
+          : 'text-gray-400 hover:text-white'
+      }`}
+    >
+      Cameras
+    </button>
+    <button 
+      onClick={() => navigate('/recordings')}
+      className={`font-medium pb-1 transition-colors ${
+        location.pathname === '/recordings' 
+          ? 'text-primary-400 border-b-2 border-primary-400' 
+          : 'text-gray-400 hover:text-white'
+      }`}
+    >
+      Recordings
+    </button>
+    <button 
+      onClick={() => navigate('/analytics')}
+      className={`font-medium pb-1 transition-colors ${
+        location.pathname === '/analytics' 
+          ? 'text-primary-400 border-b-2 border-primary-400' 
+          : 'text-gray-400 hover:text-white'
+      }`}
+    >
+      Analytics
+    </button>
+  </div>
+</div>
+
+</nav>
+);
 }
