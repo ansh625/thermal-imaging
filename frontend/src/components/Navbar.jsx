@@ -1,7 +1,7 @@
 import { useAuthStore } from '../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { Activity } from 'lucide-react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 const location = useLocation();
 
 import NotificationCenter from './NotificationCenter';
