@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
-import { Lock, Eye, EyeOff, CheckCircle } from 'lucide-react';
+import { Lock, Eye, EyeOff, CheckCircle, Copy } from 'lucide-react';
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -13,17 +13,21 @@ export default function ResetPassword() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const token = searchParams.get('token');
+  const [manualToken, setManualToken] = useState('');
+  const token = searchParams.get('token') || manualToken;
 
-  useEffect(() => {
-    if (!token) {
-      toast.error('Invalid reset link');
-      navigate('/login');
-    }
-  }, [token, navigate]);
+  console.log('Reset Password Page Loaded');
+  console.log('Token from URL:', searchParams.get('token'));
+  console.log('Manual token:', manualToken);
+  console.log('Final token to use:', token);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!token) {
+      toast.error('Please enter or provide a valid reset token');
+      return;
+    }
 
     if (password.length < 8) {
       toast.error('Password must be at least 8 characters');
@@ -37,12 +41,16 @@ export default function ResetPassword() {
 
     setLoading(true);
     try {
-      await authAPI.resetPassword(token, password);
+      console.log('Submitting reset with token:', token);
+      const response = await authAPI.resetPassword(token, password);
+      console.log('Reset password response:', response);
       setSuccess(true);
       toast.success('Password reset successful!');
       setTimeout(() => navigate('/login'), 2000);
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to reset password');
+      console.error('Reset password error:', error);
+      const errorMsg = error.response?.data?.detail || error.response?.data?.message || 'Failed to reset password';
+      toast.error(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -80,14 +88,39 @@ export default function ResetPassword() {
         animate={{ opacity: 1, y: 0 }}
         className="glass-dark rounded-2xl p-8 w-full max-w-md border border-white/10 relative z-10"
       >
+        <Link to="/login" className="flex items-center gap-2 text-gray-400 hover:text-white mb-6 transition-colors">
+          <span className="text-sm">← Back to login</span>
+        </Link>
+
         <div className="mb-8">
           <h2 className="text-3xl font-display font-bold text-white mb-2">
             Reset Password
           </h2>
           <p className="text-gray-400">
-            Enter your new password below
+            {token ? 'Enter your new password below' : 'Enter the reset token and your new password'}
           </p>
         </div>
+
+        {/* If no token in URL, show token input field */}
+        {!searchParams.get('token') && (
+          <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+            <p className="text-sm text-blue-300 mb-3">
+              <strong>No reset token found in URL.</strong> If you got a reset code from the app, paste it below:
+            </p>
+            <div className="relative">
+              <input
+                type="text"
+                value={manualToken}
+                onChange={(e) => setManualToken(e.target.value)}
+                placeholder="Paste your reset token here"
+                className="input-field text-sm w-full"
+              />
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              Or go back to <Link to="/forgot-password" className="text-blue-400 hover:underline">Forgot Password</Link> to request a new one
+            </p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
@@ -135,12 +168,16 @@ export default function ResetPassword() {
 
           <button
             type="submit"
-            disabled={loading}
-            className="btn-primary w-full"
+            disabled={loading || !token}
+            className={`w-full py-3 rounded-lg font-medium transition-all ${
+              loading || !token
+                ? 'bg-gray-600 text-gray-300 cursor-not-allowed'
+                : 'btn-primary'
+            }`}
           >
             {loading ? (
               <>
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block mr-2"></div>
                 Resetting...
               </>
             ) : (
@@ -149,11 +186,20 @@ export default function ResetPassword() {
           </button>
         </form>
 
-        <p className="text-center mt-6 text-sm text-gray-400">
-          <Link to="/login" className="text-primary-400 hover:underline">
-            Back to login
-          </Link>
-        </p>
+        <div className="mt-6 space-y-2 text-center">
+          <p className="text-sm text-gray-400">
+            Remember your password?{' '}
+            <Link to="/login" className="text-primary-400 hover:underline">
+              Sign in
+            </Link>
+          </p>
+          <p className="text-sm text-gray-400">
+            Don't have a reset link?{' '}
+            <Link to="/forgot-password" className="text-primary-400 hover:underline">
+              Request one
+            </Link>
+          </p>
+        </div>
       </motion.div>
     </div>
   );
