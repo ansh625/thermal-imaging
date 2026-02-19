@@ -9,6 +9,7 @@ import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import Cameras from './pages/Cameras';
 import Recordings from './pages/Recordings';
+import Schedules from './pages/Schedules';
 import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
 
@@ -66,6 +67,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Recordings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/schedules"
+            element={
+              <ProtectedRoute>
+                <Schedules />
               </ProtectedRoute>
             }
           />
