@@ -50,6 +50,7 @@ class CameraSession:
             return None
         ret, frame = self.capture.read()
         if ret and frame is not None:
+            # Skip frames if processing is too slow
             self.last_frame = frame
             return frame
         return None
@@ -102,6 +103,13 @@ class CameraManager:
     
     def get_session(self, session_id: str):
         return self.sessions.get(session_id)
+    
+    def get_session_by_camera_id(self, camera_id: int):
+        """Get the active session for a camera ID"""
+        for session in self.sessions.values():
+            if session.camera_id == camera_id:
+                return session
+        return None
     
     async def disconnect_session(self, session_id: str):
         session = self.sessions.get(session_id)
