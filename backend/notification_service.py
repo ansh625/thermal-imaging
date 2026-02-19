@@ -10,9 +10,26 @@ class NotificationService:
     @staticmethod
     def create_notification(user_id: int, title: str, message: str, 
                           type: str = "info", data: dict = None):
-        """Create a new notification"""
+        """Create a new notification, avoiding duplicates for same camera/session"""
         try:
             db = next(get_db())
+            # Check for existing unread notification with same title/message/data
+            query = db.query(Notification).filter(
+                Notification.user_id == user_id,
+                Notification.title == title,
+                Notification.message == message,
+                Notification.is_read == False
+            )
+            # If data contains camera_id or session_id, check for those too
+            if data:
+                if 'camera_id' in data:
+                    query = query.filter(Notification.data["camera_id"].as_integer() == int(data["camera_id"]))
+                if 'session_id' in data:
+                    query = query.filter(Notification.data["session_id"].astext == str(data["session_id"]))
+            existing = query.first()
+            if existing:
+                logger.info(f"Duplicate notification prevented: {title} for user {user_id}")
+                return existing
             notification = Notification(
                 user_id=user_id,
                 title=title,
@@ -23,10 +40,8 @@ class NotificationService:
             db.add(notification)
             db.commit()
             db.refresh(notification)
-            
             logger.info(f"Notification created: {title} for user {user_id}")
             return notification
-            
         except Exception as e:
             logger.error(f"Error creating notification: {e}")
             return None
