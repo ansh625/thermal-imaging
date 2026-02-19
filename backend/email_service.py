@@ -18,9 +18,24 @@ class EmailService:
         self.smtp_password = os.getenv("SMTP_PASSWORD", "")
         self.from_email = os.getenv("FROM_EMAIL", self.smtp_user)
         self.from_name = os.getenv("FROM_NAME", "CSIO ThermalStream")
+        
+        # Log SMTP configuration (without password)
+        logger.info(f"Email Service initialized with:")
+        logger.info(f"  SMTP Host: {self.smtp_host}")
+        logger.info(f"  SMTP Port: {self.smtp_port}")
+        logger.info(f"  From Email: {self.from_email}")
+        logger.info(f"  From Name: {self.from_name}")
+        
+        # Validate configuration
+        if not self.smtp_user or not self.smtp_password:
+            logger.warning("SMTP_USER or SMTP_PASSWORD not configured - Email sending will fail")
     
     def send_email(self, to_email: str, subject: str, html_content: str) -> bool:
-        """Send HTML email"""
+        """Send HTML email with detailed error handling"""
+        if not self.smtp_user or not self.smtp_password:
+            logger.error("SMTP credentials not configured. Cannot send email.")
+            return False
+        
         try:
             msg = MIMEMultipart('alternative')
             msg['Subject'] = subject
@@ -30,22 +45,37 @@ class EmailService:
             html_part = MIMEText(html_content, 'html')
             msg.attach(html_part)
             
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+            logger.debug(f"Connecting to {self.smtp_host}:{self.smtp_port}")
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10) as server:
+                logger.debug("Starting TLS...")
                 server.starttls()
+                
+                logger.debug(f"Logging in as {self.smtp_user}")
                 if self.smtp_user and self.smtp_password:
                     server.login(self.smtp_user, self.smtp_password)
+                
+                logger.debug(f"Sending message to {to_email}")
                 server.send_message(msg)
             
-            logger.info(f"Email sent to {to_email}")
+            logger.info(f"✓ Email sent successfully to {to_email}")
             return True
             
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"✗ SMTP Authentication failed: {e}")
+            logger.error("Check SMTP_USER and SMTP_PASSWORD in .env file")
+            return False
+        except smtplib.SMTPException as e:
+            logger.error(f"✗ SMTP Error: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Failed to send email: {e}")
+            logger.error(f"✗ Error sending email: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
             return False
     
     def send_password_reset_email(self, to_email: str, reset_token: str, 
                                   base_url: str = "http://localhost:5173") -> bool:
         """Send password reset email"""
+        logger.info(f"Preparing password reset email for {to_email}")
         reset_link = f"{base_url}/reset-password?token={reset_token}"
         
         html_content = f"""
