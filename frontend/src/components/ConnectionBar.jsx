@@ -48,13 +48,26 @@ export default function ConnectionBar() {
       </div>
 
       <input
+        id="camera-source"
+        name="camera_source"
         type="text"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="Enter IP, USB index (0, 1, 2) or URL..."
         disabled={connected}
-        className="flex-1 px-4 py-2 bg-dark border border-gray-600 rounded-lg focus:border-primary outline-none disabled:opacity-50"
-      />
+        className="
+          flex-1 px-4 py-2 rounded-lg
+          bg-dark-400
+          text-white
+          caret-primary-400
+          placeholder-gray-400
+          border border-gray-600
+          focus:border-primary-500
+          focus:outline-none
+          disabled:opacity-50
+  "
+/>
+
 
       <button
         onClick={handleConnect}
