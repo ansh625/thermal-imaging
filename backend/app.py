@@ -1,18 +1,24 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
-from typing import Optional, List
+from typing import Optional, List, Dict
 import os
 import uuid
 import cv2
 import asyncio
 import base64
 import secrets
+import logging
 from pathlib import Path
 import json
+import numpy as np
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 from database import (get_db, init_db, User, Camera, Recording, Detection, 
                      RecordingSchedule, Notification)
@@ -28,6 +34,42 @@ from websocket_manager import websocket_manager
 
 app = FastAPI(title="CSIO ThermalStream API", version="2.0.0")
 
+# ==================== DETECTION STATE MANAGER ====================
+
+class CachedDetectionState:
+    """Manages cached detections for smooth rendering"""
+    def __init__(self):
+        self.cached_detections: Dict[str, List[Dict]] = {}
+        self.detection_ages: Dict[str, int] = {}
+    
+    def update(self, session_id: str, detections: List[Dict]):
+        """Update cached detections"""
+        self.cached_detections[session_id] = detections
+        self.detection_ages[session_id] = 0
+    
+    def get(self, session_id: str) -> List[Dict]:
+        """Get cached detections with aging"""
+        if session_id not in self.cached_detections:
+            return []
+        
+        # Age out old detections (if not updated in 3 frames, clear them)
+        age = self.detection_ages.get(session_id, 0)
+        if age > 3:
+            self.cached_detections[session_id] = []
+            return []
+        
+        self.detection_ages[session_id] = age + 1
+        return self.cached_detections[session_id]
+    
+    def clear(self, session_id: str):
+        """Clear detections for session"""
+        if session_id in self.cached_detections:
+            del self.cached_detections[session_id]
+        if session_id in self.detection_ages:
+            del self.detection_ages[session_id]
+
+detection_cache = CachedDetectionState()
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,10 +82,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Create directories
+# Create directories first
 for dir_path in ['recordings', 'screenshots', 'detections', 'thumbnails']:
     Path(dir_path).mkdir(exist_ok=True)
+
+# Mount static files for detections and recordings
+app.mount("/detections", StaticFiles(directory="detections"), name="detections")
+app.mount("/recordings", StaticFiles(directory="recordings"), name="recordings")
 
 # Storage tracking
 storage_stats = {
@@ -152,14 +197,31 @@ async def forgot_password(email: str,
     user.reset_token_expires = datetime.utcnow() + timedelta(hours=1)
     db.commit()
     
-    # Send email in background
-    background_tasks.add_task(
-        email_service.send_password_reset_email,
-        user.email,
-        reset_token
-    )
-    
-    return {"message": "If the email exists, a reset link has been sent"}
+    # Try to send email synchronously with error handling
+    logger.info(f"Attempting to send password reset email to {user.email}")
+    try:
+        email_sent = email_service.send_password_reset_email(user.email, reset_token)
+        if email_sent:
+            logger.info(f"Password reset email successfully sent to {user.email}")
+            return {
+                "message": "If the email exists, a reset link has been sent",
+                "success": True
+            }
+        else:
+            logger.warning(f"Failed to send password reset email to {user.email}")
+            # Still return success message for security, but log the failure
+            return {
+                "message": "If the email exists, a reset link has been sent",
+                "success": False,
+                "note": "Email sending failed - token generated but not sent"
+            }
+    except Exception as e:
+        logger.error(f"Exception while sending password reset email: {e}")
+        return {
+            "message": "If the email exists, a reset link has been sent",
+            "success": False,
+            "error": str(e)
+        }
 
 @app.post("/api/auth/reset-password")
 async def reset_password(token: str, new_password: str,
@@ -179,6 +241,89 @@ async def reset_password(token: str, new_password: str,
     db.commit()
     
     return {"message": "Password reset successful"}
+
+@app.post("/api/auth/test-email")
+async def test_email(to_email: str = "test@example.com"):
+    """Test email sending - for debugging SMTP issues"""
+    logger.info(f"Testing email sending to {to_email}")
+    try:
+        test_html = """
+        <html>
+        <body style="font-family: Arial, sans-serif;">
+            <h2>CSIO ThermalStream - Email Test</h2>
+            <p>This is a test email to verify SMTP configuration is working correctly.</p>
+            <p><strong>If you received this, email sending is working!</strong></p>
+            <p style="color: #666; margin-top: 20px;">Test sent at: {}</p>
+        </body>
+        </html>
+        """.format(datetime.utcnow().isoformat())
+        
+        result = email_service.send_email(to_email, "CSIO ThermalStream - Email Test", test_html)
+        
+        if result:
+            logger.info(f"✓ Test email sent successfully to {to_email}")
+            return {
+                "success": True,
+                "message": "Test email sent successfully",
+                "email": to_email,
+                "smtp_host": email_service.smtp_host,
+                "smtp_port": email_service.smtp_port,
+                "from_email": email_service.from_email
+            }
+        else:
+            logger.error(f"✗ Test email failed to send to {to_email}")
+            return {
+                "success": False,
+                "message": "Test email failed to send - check backend logs for details",
+                "email": to_email
+            }
+    except Exception as e:
+        logger.error(f"✗ Exception during email test: {e}")
+        return {
+            "success": False,
+            "message": f"Error: {str(e)}",
+            "error_type": type(e).__name__
+        }
+
+@app.get("/api/auth/forgot-password-code")
+async def get_forgot_password_code(email: str, 
+                                    db: Session = Depends(get_db)):
+    """
+    ALTERNATIVE METHOD: Get password reset code (without email)
+    Returns a reset token that can be used to reset password
+    Useful when email is not working
+    """
+    try:
+        logger.info(f"Reset code requested for email: {email}")
+        
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            logger.warning(f"Reset code requested for non-existent user: {email}")
+            return {
+                "message": "If the email exists, a reset code has been generated",
+                "success": False
+            }
+        
+        # Generate reset token
+        reset_token = secrets.token_urlsafe(32)
+        user.reset_token = reset_token
+        user.reset_token_expires = datetime.utcnow() + timedelta(hours=1)
+        db.commit()
+        
+        # Return the code directly to user (for alternative workflow)
+        logger.info(f"✓ Reset code generated for {user.email}")
+        logger.warning(f"PASSWORD RESET CODE FOR {user.email}: {reset_token}")
+        
+        return {
+            "success": True,
+            "message": "Reset code generated successfully",
+            "reset_token": reset_token,
+            "expires_in": "1 hour",
+            "note": "Use this token at /reset-password endpoint with the new password"
+        }
+    except Exception as e:
+        logger.error(f"✗ Error generating reset code for {email}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generating reset code: {str(e)}")
 
 # ==================== CAMERA MANAGEMENT ====================
 
@@ -222,6 +367,48 @@ async def connect_camera(url: str, camera_id: int = 1,
     db.commit()
     db.refresh(camera)
     
+    # Check if there's an active schedule and auto-start recording
+    active_schedule = scheduler_service.get_active_schedule_for_camera(camera.id)
+    auto_recording_started = False
+    
+    if active_schedule:
+        try:
+            # Auto-start recording for scheduled recording
+            filepath = recording_manager.start_recording(
+                session_id,
+                session.fps,
+                (1280, 720),
+                camera.name
+            )
+            
+            if filepath:
+                # Create database entry
+                recording = Recording(
+                    filename=os.path.basename(filepath),
+                    format="mp4",
+                    storage_path=filepath,
+                    camera_id=camera.id,
+                    user_id=current_user.id,
+                    started_at=datetime.utcnow(),
+                    is_scheduled=True
+                )
+                db.add(recording)
+                db.commit()
+                
+                auto_recording_started = True
+                logger.info(f"Auto-started recording for camera {camera.id} (schedule: {active_schedule.name})")
+                
+                # Notification
+                notification_service.create_notification(
+                    user_id=current_user.id,
+                    title="Scheduled Recording Started",
+                    message=f"Auto recording started for {camera.name} ({active_schedule.name})",
+                    type="info",
+                    data={"recording_id": recording.id, "camera_id": camera.id, "schedule_id": active_schedule.id}
+                )
+        except Exception as e:
+            logger.error(f"Error auto-starting scheduled recording: {e}")
+    
     # Send notification
     notification_service.create_notification(
         user_id=current_user.id,
@@ -239,7 +426,8 @@ async def connect_camera(url: str, camera_id: int = 1,
             "camera_id": camera.id,
             "session_id": session_id,
             "name": camera.name,
-            "fps": session.fps
+            "fps": session.fps,
+            "auto_recording": auto_recording_started
         }
     )
     
@@ -248,7 +436,12 @@ async def connect_camera(url: str, camera_id: int = 1,
         "camera_id": camera.id,
         "fps": session.fps,
         "resolution": "1280x720",
-        "status": "connected"
+        "status": "connected",
+        "auto_recording": auto_recording_started,
+        "active_schedule": {
+            "id": active_schedule.id,
+            "name": active_schedule.name
+        } if active_schedule else None
     }
 
 @app.post("/api/camera/disconnect")
@@ -339,15 +532,29 @@ async def delete_camera(camera_id: int,
 
 @app.websocket("/ws/video/{session_id}")
 async def video_stream(websocket: WebSocket, session_id: str):
-    """WebSocket video streaming with YOLO detection"""
+    """WebSocket video streaming with optimized detection"""
     await websocket.accept()
     
     detection_enabled = False
     detection_confidence = 0.5
+    db = next(get_db())
+    frame_count = 0
+    scheduled_recording_active = False
+    
+    # Detection frequency: run detection every N frames
+    # Lower = more frequent detection, higher CPU
+    # Higher = smoother video, less frequent detection
+    DETECTION_INTERVAL = 2  # Run detection every 2 frames (better balance)
     
     try:
         camera_session = camera_manager.get_session(session_id)
         if not camera_session:
+            await websocket.close()
+            return
+        
+        # Get camera from database
+        camera = db.query(Camera).filter(Camera.session_id == session_id).first()
+        if not camera:
             await websocket.close()
             return
         
@@ -358,41 +565,147 @@ async def video_stream(websocket: WebSocket, session_id: str):
                 if message.get('type') == 'toggle_detection':
                     detection_enabled = message.get('enabled', False)
                     detection_confidence = message.get('confidence', 0.5)
+                    if not detection_enabled:
+                        detection_cache.clear(session_id)
             except asyncio.TimeoutError:
                 pass
             
+            # Check if scheduled recording should be active (every 30 frames ~1 second)
+            if frame_count % 30 == 0:
+                try:
+                    should_record = scheduler_service.is_scheduled_recording_active(camera.id)
+                    
+                    # Start recording if scheduled and not already recording
+                    if should_record and not recording_manager.is_recording(session_id) and not scheduled_recording_active:
+                        logger.info(f"Starting scheduled recording for camera {camera.id} (session: {session_id})")
+                        filepath = recording_manager.start_recording(
+                            session_id,
+                            camera_session.fps,
+                            (1280, 720),
+                            camera.name
+                        )
+                        
+                        if filepath:
+                            recording = Recording(
+                                filename=os.path.basename(filepath),
+                                format="mp4",
+                                storage_path=filepath,
+                                camera_id=camera.id,
+                                user_id=camera.user_id,
+                                started_at=datetime.utcnow(),
+                                is_scheduled=True
+                            )
+                            db.add(recording)
+                            db.commit()
+                            scheduled_recording_active = True
+                            logger.info(f"Scheduled recording started for camera {camera.id}")
+                    
+                    # Stop recording if schedule is no longer active
+                    elif not should_record and (recording_manager.is_recording(session_id) or scheduled_recording_active):
+                        logger.info(f"Stopping scheduled recording for camera {camera.id}")
+                        recording_manager.stop_recording(session_id)
+                        scheduled_recording_active = False
+                        
+                except Exception as e:
+                    logger.error(f"Error checking scheduled recording: {e}")
+            
             frame = await camera_session.get_frame()
             if frame is None:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.005)
                 continue
             
-            # YOLO Detection
-            detections = []
-            if detection_enabled:
-                detections = yolo_detector.detect(frame, detection_confidence)
-                if detections:
-                    frame = yolo_detector.draw_detections(frame, detections)
+            frame_count += 1
+            original_frame = frame.copy()
+            display_frame = frame.copy()
             
-            # Recording
+            # YOLO Detection - run every N frames
+            # This keeps CPU usage reasonable while maintaining smooth video
+            if detection_enabled and frame_count % DETECTION_INTERVAL == 0:
+                try:
+                    detections = yolo_detector.detect(display_frame, detection_confidence)
+                    if detections:
+                        # Cache the detections so they persist across frames
+                        detection_cache.update(session_id, detections)
+                        
+                        # Save to database (non-blocking via asyncio)
+                        loop = asyncio.get_event_loop()
+                        loop.run_in_executor(
+                            None,
+                            lambda: _save_detections_sync(db, camera.id, detections, original_frame)
+                        )
+                except Exception as e:
+                    logger.error(f"Detection error: {e}")
+            
+            # Get cached detections (persist even if detection isn't running this frame)
+            # This eliminates blinking!
+            current_detections = detection_cache.get(session_id) if detection_enabled else []
+            
+            # Draw cached detections on EVERY frame
+            if current_detections and detection_enabled:
+                display_frame = yolo_detector.draw_detections(display_frame, current_detections)
+            
+            # Recording - record with detection boxes if detections exist
             if recording_manager.is_recording(session_id):
-                recording_manager.write_frame(session_id, frame)
+                # Create a copy for recording with detections drawn
+                recording_frame = original_frame.copy()
+                if current_detections and detection_enabled:
+                    recording_frame = yolo_detector.draw_detections(recording_frame, current_detections)
+                recording_manager.write_frame(session_id, recording_frame)
             
-            # Encode and send
-            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            # Encode with optimized quality
+            _, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
             frame_b64 = base64.b64encode(buffer).decode('utf-8')
             
-            await websocket.send_json({
-                "frame": frame_b64,
-                "detections": detections,
-                "recording": recording_manager.is_recording(session_id)
-            })
+            try:
+                await asyncio.wait_for(
+                    websocket.send_json({
+                        "frame": frame_b64,
+                        "detections": current_detections,
+                        "recording": recording_manager.is_recording(session_id),
+                        "frame_count": frame_count
+                    }),
+                    timeout=0.05
+                )
+            except asyncio.TimeoutError:
+                logger.debug(f"WebSocket send timeout for {session_id}")
+                continue
             
-            await asyncio.sleep(1.0 / camera_session.fps)
+            # Keep stream smooth - minimal sleep
+            await asyncio.sleep(0.005)  # ~200 FPS max upstream
             
     except WebSocketDisconnect:
-        print(f"WebSocket disconnected: {session_id}")
+        logger.info(f"WebSocket disconnected: {session_id}")
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error: {e}")
+    finally:
+        detection_cache.clear(session_id)
+        db.close()
+
+
+def _save_detections_sync(db: Session, camera_id: int, detections: List[Dict], frame: np.ndarray):
+    """Save detections to database (sync, runs in thread pool)"""
+    try:
+        for det in detections:
+            try:
+                screenshot_path = yolo_detector.save_detection(frame, det)
+                detection_record = Detection(
+                    camera_id=camera_id,
+                    class_name=det['class_name'],
+                    confidence=det['confidence'],
+                    bbox_x1=det['bbox']['x1'],
+                    bbox_y1=det['bbox']['y1'],
+                    bbox_x2=det['bbox']['x2'],
+                    bbox_y2=det['bbox']['y2'],
+                    screenshot_path=screenshot_path,
+                    detected_at=datetime.utcnow()
+                )
+                db.add(detection_record)
+            except Exception as e:
+                logger.error(f"Error saving detection: {e}")
+        db.commit()
+    except Exception as e:
+        logger.error(f"Error committing detections: {e}")
+        db.rollback()
 
 # ==================== RECORDING MANAGEMENT ====================
 
@@ -608,14 +921,68 @@ async def list_detections(limit: int = 100,
         ]
     }
 
+# ==================== SCREENSHOT ====================
+
+@app.post("/api/screenshot/capture")
+async def capture_screenshot(session_id: str,
+                            current_user: User = Depends(get_current_active_user),
+                            db: Session = Depends(get_db)):
+    """Capture and save a screenshot from live stream"""
+    camera_session = camera_manager.get_session(session_id)
+    if not camera_session:
+        raise HTTPException(status_code=404, detail="Camera session not found")
+    
+    camera = db.query(Camera).filter(
+        Camera.session_id == session_id,
+        Camera.user_id == current_user.id
+    ).first()
+    
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    
+    # Get latest frame from camera session
+    frame = camera_session.last_frame
+    if frame is None:
+        raise HTTPException(status_code=400, detail="No frame available")
+    
+    # Save screenshot
+    try:
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        screenshot_dir = "screenshots"
+        Path(screenshot_dir).mkdir(exist_ok=True)
+        
+        filename = f"{camera.name}_{timestamp}.jpg"
+        filepath = os.path.join(screenshot_dir, filename)
+        
+        cv2.imwrite(filepath, frame)
+        
+        logger.info(f"Screenshot saved: {filepath}")
+        
+        # Broadcast notification
+        await websocket_manager.broadcast_to_user(
+            current_user.id,
+            "screenshot_taken",
+            {"filename": filename, "path": filepath, "camera_id": camera.id}
+        )
+        
+        return {
+            "message": "Screenshot captured successfully",
+            "filename": filename,
+            "path": filepath
+        }
+        
+    except Exception as e:
+        logger.error(f"Error capturing screenshot: {e}")
+        raise HTTPException(status_code=500, detail="Failed to capture screenshot")
+
 # ==================== SCHEDULER ====================
 
 @app.post("/api/schedule/create")
-async def create_schedule(camera_id: int,
-                         name: str,
-                         days_of_week: List[str],
-                         start_time: str,
-                         end_time: str,
+async def create_schedule(camera_id: int = Query(...),
+                         name: str = Query(...),
+                         days_of_week: List[str] = Query(...),
+                         start_time: str = Query(...),
+                         end_time: str = Query(...),
                          current_user: User = Depends(get_current_active_user),
                          db: Session = Depends(get_db)):
     """Create recording schedule"""
