@@ -9,6 +9,37 @@ const api = axios.create({
   },
 });
 
+// Custom params serializer for proper array handling
+const paramsSerializer = (params) => {
+  const parts = [];
+  const stringifyPrimitive = (v) => {
+    switch (typeof v) {
+      case 'string':
+        return v;
+      case 'boolean':
+        return v ? 'true' : 'false';
+      case 'number':
+        return isFinite(v) ? v : '';
+      default:
+        return '';
+    }
+  };
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === null || value === undefined) return;
+
+    if (Array.isArray(value)) {
+      value.forEach((v) => {
+        parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(stringifyPrimitive(v))}`);
+      });
+    } else {
+      parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(stringifyPrimitive(value))}`);
+    }
+  });
+
+  return parts.join('&');
+};
+
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {
@@ -36,9 +67,12 @@ export const authAPI = {
   }),
   getMe: () => api.get('/auth/me'),
   forgotPassword: (email) => api.post('/auth/forgot-password', null, { params: { email } }),
-  resetPassword: (token, newPassword) => api.post('/auth/reset-password', null, {
-    params: { token, new_password: newPassword }
-  }),
+  getResetCode: (email) => api.get('/auth/forgot-password-code', { params: { email } }),
+  resetPassword: (token, newPassword) => api.post('/auth/reset-password', null, { params: {
+    token,
+    new_password: newPassword
+  }}),
+  testEmail: (to_email) => api.post('/auth/test-email', null, { params: { to_email } }),
 };
 
 // Camera API
@@ -58,6 +92,11 @@ export const recordingAPI = {
   delete: (recordingId) => api.delete(`/recording/${recordingId}`),
 };
 
+// Screenshot API
+export const screenshotAPI = {
+  capture: (sessionId) => api.post('/screenshot/capture', null, { params: { session_id: sessionId } }),
+};
+
 // Detection API
 export const detectionAPI = {
   list: (limit = 100) => api.get('/detection/list', { params: { limit } }),
@@ -65,7 +104,16 @@ export const detectionAPI = {
 
 // Schedule API
 export const scheduleAPI = {
-  create: (data) => api.post('/schedule/create', null, { params: data }),
+  create: (data) => api.post('/schedule/create', null, { 
+    params: {
+      camera_id: parseInt(data.camera_id),
+      name: data.name,
+      start_time: data.start_time,
+      end_time: data.end_time,
+      days_of_week: data.days_of_week
+    },
+    paramsSerializer
+  }),
   list: () => api.get('/schedule/list'),
   toggle: (scheduleId) => api.put(`/schedule/${scheduleId}/toggle`),
   delete: (scheduleId) => api.delete(`/schedule/${scheduleId}`),
