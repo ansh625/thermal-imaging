@@ -20,3 +20,14 @@ Thumbs.db
 #Editor
 .vscode/
 .history/
+
+# Model files
+backend/*.pt
+
+# Database
+backend/*.db
+
+# Runtime folders
+backend/detections/
+backend/recordings/
+backend/screenshots/
