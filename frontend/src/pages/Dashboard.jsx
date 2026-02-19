@@ -9,8 +9,9 @@ import VideoPlayer from '../components/VideoPlayer';
 import SchedulerModal from '../components/SchedulerModal';
 
 import { useRealTimeData } from '../hooks/useRealTimeData';
-import { dashboardAPI, cameraAPI } from '../services/api';
+import { dashboardAPI, cameraAPI, recordingAPI, screenshotAPI } from '../services/api';
 
+import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
 import { 
   Camera, Video, Image as ImageIcon, Maximize2, ZoomIn,
@@ -19,13 +20,15 @@ import {
 
 export default function Dashboard() {
   const { token } = useAuthStore();
-  const { connected } = useCameraStore();
+  const { connected, sessionId } = useCameraStore();
   const navigate = useNavigate();
 
   const { stats: realtimeStats, isConnected } = useRealTimeData();
 
   const [zoom, setZoom] = useState(0);
   const [recording, setRecording] = useState(false);
+  const [recordingLoading, setRecordingLoading] = useState(false);
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
   const [showScheduler, setShowScheduler] = useState(false);
   const [cameras, setCameras] = useState([]);
 
@@ -69,6 +72,53 @@ export default function Dashboard() {
       setCameras(response.data.cameras);
     } catch (error) {
       console.error('Failed to load cameras:', error);
+    }
+  };
+
+  const handleRecordingToggle = async () => {
+    if (!sessionId) {
+      toast.error('No camera connected');
+      return;
+    }
+
+    setRecordingLoading(true);
+    try {
+      if (recording) {
+        // Stop recording
+        await recordingAPI.stop(sessionId);
+        setRecording(false);
+        toast.success('Recording stopped');
+        loadStats();
+      } else {
+        // Start recording
+        await recordingAPI.start(sessionId);
+        setRecording(true);
+        toast.success('Recording started');
+        loadStats();
+      }
+    } catch (error) {
+      console.error('Recording error:', error);
+      toast.error(error.response?.data?.detail || 'Recording failed');
+    } finally {
+      setRecordingLoading(false);
+    }
+  };
+
+  const handleScreenshot = async () => {
+    if (!sessionId) {
+      toast.error('No camera connected');
+      return;
+    }
+
+    setScreenshotLoading(true);
+    try {
+      const response = await screenshotAPI.capture(sessionId);
+      toast.success('Screenshot captured successfully');
+    } catch (error) {
+      console.error('Screenshot error:', error);
+      toast.error(error.response?.data?.detail || 'Screenshot failed');
+    } finally {
+      setScreenshotLoading(false);
     }
   };
 
@@ -153,17 +203,29 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button className="p-2 hover:bg-white/10 rounded-lg">
+                  <button
+                    className="p-2 hover:bg-white/10 rounded-lg"
+                    onClick={() => {
+                      const videoBox = document.querySelector('.aspect-video');
+                      if (videoBox) {
+                        if (!document.fullscreenElement) {
+                          videoBox.requestFullscreen();
+                        } else {
+                          document.exitFullscreen();
+                        }
+                      }
+                    }}
+                    title="Enlarge"
+                  >
                     <Maximize2 size={18} />
                   </button>
-                  <button className="p-2 hover:bg-white/10 rounded-lg">
-                    <Settings2 size={18} />
-                  </button>
+                  {/* Settings button removed as requested */}
+                      {/* Stream Settings modal removed as requested */}
                 </div>
               </div>
 
               <div className="aspect-video rounded-lg overflow-hidden bg-black">
-                <VideoPlayer />
+                <VideoPlayer zoom={parseInt(zoom)} />
               </div>
 
               <div className="flex items-center gap-4 mt-4">
@@ -187,18 +249,41 @@ export default function Dashboard() {
               </h3>
 
               <button
-                onClick={() => setRecording(!recording)}
-                className={`w-full py-3 rounded-lg font-semibold flex items-center justify-center gap-2 ${
+                onClick={handleRecordingToggle}
+                disabled={recordingLoading || !sessionId}
+                className={`w-full py-3 rounded-lg font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                   recording ? 'bg-red-600 hover:bg-red-700' : 'btn-primary'
                 }`}
               >
-                <Video size={18} />
-                {recording ? 'STOP Recording' : 'START Recording'}
+                {recordingLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    {recording ? 'Stopping...' : 'Starting...'}
+                  </>
+                ) : (
+                  <>
+                    <Video size={18} />
+                    {recording ? 'STOP Recording' : 'START Recording'}
+                  </>
+                )}
               </button>
 
-              <button className="btn-secondary w-full mt-2 flex items-center justify-center gap-2">
-                <ImageIcon size={18} />
-                Screenshot
+              <button 
+                onClick={handleScreenshot}
+                disabled={screenshotLoading || !sessionId}
+                className="btn-secondary w-full mt-2 flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {screenshotLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Capturing...
+                  </>
+                ) : (
+                  <>
+                    <ImageIcon size={18} />
+                    Screenshot
+                  </>
+                )}
               </button>
 
               <button
