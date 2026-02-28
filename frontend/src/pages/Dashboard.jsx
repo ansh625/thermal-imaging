@@ -15,7 +15,7 @@ import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
 import { 
   Camera, Video, Image as ImageIcon, Maximize2, ZoomIn,
-  Radio, Activity, Thermometer, Eye, Download, Settings2, Clock
+  Radio, Activity, Eye, Download, Settings2, Clock
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -155,33 +155,10 @@ export default function Dashboard() {
 
       <div className="p-6 space-y-6">
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {statsData.map((stat, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }}
-              className="glass-dark rounded-xl p-5 border border-white/10 hover:border-primary-500/50 transition-all duration-300"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-400 mb-1">{stat.label}</p>
-                  <p className="text-3xl font-bold text-white">{stat.value}</p>
-                </div>
-                <div className={`w-12 h-12 rounded-lg bg-white/5 flex items-center justify-center ${stat.color}`}>
-                  <stat.icon size={24} />
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-
         {/* Connection Bar */}
         <ConnectionBar />
 
-        {/* Main Grid */}
+        {/* Main Grid - Video and Controls */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
 
           {/* Video Section */}
@@ -203,37 +180,17 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    className="p-2 hover:bg-white/10 rounded-lg"
-                    onClick={() => {
-                      const videoBox = document.querySelector('.aspect-video');
-                      if (videoBox) {
-                        if (!document.fullscreenElement) {
-                          videoBox.requestFullscreen();
-                        } else {
-                          document.exitFullscreen();
-                        }
-                      }
-                    }}
-                    title="Enlarge"
-                  >
+                  <button className="p-2 hover:bg-white/10 rounded-lg">
                     <Maximize2 size={18} />
                   </button>
-                  {/* Settings button removed as requested */}
-                      {/* Stream Settings modal removed as requested */}
+                  <button className="p-2 hover:bg-white/10 rounded-lg">
+                    <Settings2 size={18} />
+                  </button>
                 </div>
               </div>
 
               <div className="aspect-video rounded-lg overflow-hidden bg-black">
                 <VideoPlayer zoom={parseInt(zoom)} />
-              </div>
-
-              <div className="flex items-center gap-4 mt-4">
-                <Thermometer size={16} className="text-gray-400" />
-                <div className="flex-1 h-2 bg-dark-400 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-blue-500 via-yellow-500 to-red-500 w-[60%]" />
-                </div>
-                <span className="text-sm text-gray-400">25°C</span>
               </div>
             </div>
           </div>
@@ -313,6 +270,29 @@ export default function Dashboard() {
               <div className="text-right text-primary-400 font-mono">{zoom}x</div>
             </div>
           </div>
+        </div>
+
+        {/* Stats Grid - Below Video */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {statsData.map((stat, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.1 }}
+              className="glass-dark rounded-xl p-5 border border-white/10 hover:border-primary-500/50 transition-all duration-300"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400 mb-1">{stat.label}</p>
+                  <p className="text-3xl font-bold text-white">{stat.value}</p>
+                </div>
+                <div className={`w-12 h-12 rounded-lg bg-white/5 flex items-center justify-center ${stat.color}`}>
+                  <stat.icon size={24} />
+                </div>
+              </div>
+            </motion.div>
+          ))}
         </div>
       </div>
 

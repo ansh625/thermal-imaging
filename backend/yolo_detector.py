@@ -44,13 +44,9 @@ class YOLODetector:
         self.load_model()
 
     def load_model(self):
-        """Load YOLO model with optimizations"""
+        """Load YOLO model safely (PyTorch 2.6+)"""
         try:
             self.model = YOLO(self.model_path)
-            # Use GPU if available for faster inference
-            if torch.cuda.is_available():
-                self.model.to('cuda')
-                logger.info("Using CUDA GPU for detection")
             self.is_loaded = True
             logger.info(f"✅ YOLO model loaded successfully: {self.model_path}")
         except Exception as e:
@@ -58,18 +54,11 @@ class YOLODetector:
             self.is_loaded = False
 
     def detect(self, frame: np.ndarray, confidence: float = 0.5) -> List[Dict]:
-        """Fast detection with minimal overhead"""
         if not self.is_loaded:
             return []
 
         try:
-            # Use smaller inference size for speed
-            results = self.model(
-                frame, 
-                conf=confidence, 
-                verbose=False,
-                imgsz=384  # Smaller = faster, balanced accuracy
-            )
+            results = self.model(frame, conf=confidence, verbose=False)
             detections = []
 
             for result in results:

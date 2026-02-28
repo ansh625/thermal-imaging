@@ -73,13 +73,21 @@ class SchedulerService:
     
     def _start_scheduled_recording(self, camera_id: int, schedule_id: int):
         """Start scheduled recording"""
-        logger.info(f"Starting scheduled recording for camera {camera_id}")
-        # This will be triggered by the scheduler
-        # The actual recording start logic will be in the WebSocket handler
+        logger.info(f"Starting scheduled recording for camera {camera_id} (schedule: {schedule_id})")
+        # Store schedule info so WebSocket handler can pick it up and start recording
         self.active_scheduled_recordings[camera_id] = {
             'schedule_id': schedule_id,
             'started_at': datetime.now()
         }
+    
+    def get_active_schedule(self, camera_id: int) -> dict:
+        """Get active schedule info for a camera"""
+        return self.active_scheduled_recordings.get(camera_id, None)
+    
+    def clear_active_schedule(self, camera_id: int):
+        """Clear active schedule for a camera"""
+        if camera_id in self.active_scheduled_recordings:
+            del self.active_scheduled_recordings[camera_id]
     
     def _stop_scheduled_recording(self, camera_id: int, schedule_id: int):
         """Stop scheduled recording"""
@@ -103,8 +111,7 @@ class SchedulerService:
             logger.warning(f"Error stopping recording for camera {camera_id}: {e}")
         
         # Remove from active scheduled recordings
-        if camera_id in self.active_scheduled_recordings:
-            del self.active_scheduled_recordings[camera_id]
+        self.clear_active_schedule(camera_id)
     
     def is_scheduled_recording_active(self, camera_id: int) -> bool:
         """Check if camera should be recording based on schedule"""

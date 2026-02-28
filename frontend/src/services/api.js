@@ -30,10 +30,14 @@ const paramsSerializer = (params) => {
 
     if (Array.isArray(value)) {
       value.forEach((v) => {
-        parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(stringifyPrimitive(v))}`);
+        parts.push(
+          `${encodeURIComponent(key)}=${encodeURIComponent(stringifyPrimitive(v))}`
+        );
       });
     } else {
-      parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(stringifyPrimitive(value))}`);
+      parts.push(
+        `${encodeURIComponent(key)}=${encodeURIComponent(stringifyPrimitive(value))}`
+      );
     }
   });
 
@@ -62,22 +66,42 @@ api.interceptors.response.use(
 // Auth API
 export const authAPI = {
   signup: (data) => api.post('/auth/signup', null, { params: data }),
-  login: (data) => api.post('/auth/login', new URLSearchParams(data), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-  }),
+  login: (data) =>
+    api.post('/auth/login', new URLSearchParams(data), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }),
   getMe: () => api.get('/auth/me'),
-  forgotPassword: (email) => api.post('/auth/forgot-password', null, { params: { email } }),
-  getResetCode: (email) => api.get('/auth/forgot-password-code', { params: { email } }),
-  resetPassword: (token, newPassword) => api.post('/auth/reset-password', null, { params: {
-    token,
-    new_password: newPassword
-  }}),
-  testEmail: (to_email) => api.post('/auth/test-email', null, { params: { to_email } }),
+  forgotPassword: (email) =>
+    api.post('/auth/forgot-password', null, { params: { email } }),
+  getResetCode: (email) =>
+    api.get('/auth/forgot-password-code', { params: { email } }),
+  resetPassword: (token, newPassword) =>
+    api.post('/auth/reset-password', null, {
+      params: {
+        token,
+        new_password: newPassword,
+      },
+    }),
+  testEmail: (to_email) =>
+    api.post('/auth/test-email', null, { params: { to_email } }),
 };
 
 // Camera API
 export const cameraAPI = {
-  connect: (data) => api.post('/camera/connect', null, { params: data }),
+  connect: (data) => {
+    // Ensure URL is converted to string
+    const params = {
+      url: String(data.url),
+      camera_id: data.camera_id || 1,
+    };
+    
+    // Add stream_type if provided
+    if (data.stream_type) {
+      params.stream_type = data.stream_type;
+    }
+    
+    return api.post('/camera/connect', null, { params });
+  },
   disconnect: (data) => api.post('/camera/disconnect', null, { params: data }),
   list: () => api.get('/camera/list'),
   delete: (cameraId) => api.delete(`/camera/${cameraId}`),
@@ -85,8 +109,15 @@ export const cameraAPI = {
 
 // Recording API
 export const recordingAPI = {
-  start: (sessionId) => api.post('/recording/start', null, { params: { session_id: sessionId } }),
-  stop: (sessionId) => api.post('/recording/stop', null, { params: { session_id: sessionId } }),
+  start: (sessionId, scheduleId = null) => {
+    const params = { session_id: sessionId };
+    if (scheduleId) {
+      params.schedule_id = scheduleId;
+    }
+    return api.post('/recording/start', null, { params });
+  },
+  stop: (sessionId) =>
+    api.post('/recording/stop', null, { params: { session_id: sessionId } }),
   list: () => api.get('/recording/list'),
   download: (recordingId) => `${API_URL}/recording/download/${recordingId}`,
   delete: (recordingId) => api.delete(`/recording/${recordingId}`),
@@ -94,7 +125,10 @@ export const recordingAPI = {
 
 // Screenshot API
 export const screenshotAPI = {
-  capture: (sessionId) => api.post('/screenshot/capture', null, { params: { session_id: sessionId } }),
+  capture: (sessionId) =>
+    api.post('/screenshot/capture', null, {
+      params: { session_id: sessionId },
+    }),
 };
 
 // Detection API
@@ -104,16 +138,17 @@ export const detectionAPI = {
 
 // Schedule API
 export const scheduleAPI = {
-  create: (data) => api.post('/schedule/create', null, { 
-    params: {
-      camera_id: parseInt(data.camera_id),
-      name: data.name,
-      start_time: data.start_time,
-      end_time: data.end_time,
-      days_of_week: data.days_of_week
-    },
-    paramsSerializer
-  }),
+  create: (data) =>
+    api.post('/schedule/create', null, {
+      params: {
+        camera_id: parseInt(data.camera_id),
+        name: data.name,
+        start_time: data.start_time,
+        end_time: data.end_time,
+        days_of_week: data.days_of_week,
+      },
+      paramsSerializer,
+    }),
   list: () => api.get('/schedule/list'),
   toggle: (scheduleId) => api.put(`/schedule/${scheduleId}/toggle`),
   delete: (scheduleId) => api.delete(`/schedule/${scheduleId}`),

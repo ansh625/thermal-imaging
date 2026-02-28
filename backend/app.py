@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, BackgroundTasks, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, BackgroundTasks, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
@@ -6,6 +6,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import timedelta, datetime
 from typing import Optional, List, Dict
+from fastapi import Query
+from pydantic import BaseModel
 import os
 import uuid
 import cv2
@@ -16,10 +18,12 @@ import logging
 from pathlib import Path
 import json
 import numpy as np
+import time
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+from database import SessionLocal 
 from database import (get_db, init_db, User, Camera, Recording, Detection, 
                      RecordingSchedule, Notification)
 from auth import (authenticate_user, create_access_token, get_current_active_user,
@@ -114,6 +118,14 @@ async def startup():
     scheduler_service.reload_all_schedules()
     calculate_storage()
     print("✅ CSIO ThermalStream API Started")
+
+# ==================== REQUEST MODELS ====================
+
+class CameraConnectRequest(BaseModel):
+    """Request model for camera connection"""
+    url: str
+    camera_id: int = 1
+    stream_type: Optional[str] = None  # "usb", "rtsp", "ip", or "raw"
 
 # ==================== AUTHENTICATION ====================
 
@@ -328,21 +340,41 @@ async def get_forgot_password_code(email: str,
 # ==================== CAMERA MANAGEMENT ====================
 
 @app.post("/api/camera/connect")
-async def connect_camera(url: str, camera_id: int = 1,
+async def connect_camera(url: str, camera_id: int = 1, stream_type: Optional[str] = None,
                         current_user: User = Depends(get_current_active_user),
                         db: Session = Depends(get_db)):
-    """Connect to camera"""
-    urls_to_try = camera_manager.parse_camera_url(url)
-    session_id = str(uuid.uuid4())
-    session = None
+    """Connect to camera with optional stream type specification"""
     
-    for attempt_url in urls_to_try:
-        session = await camera_manager.create_session(session_id, attempt_url, camera_id)
-        if session:
-            break
+    # Validate stream type if provided
+    valid_types = ["usb", "rtsp", "ip", "raw"]
+    if stream_type and stream_type.lower() not in valid_types:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid stream_type. Must be one of: {', '.join(valid_types)}"
+        )
+    
+    session_id = str(uuid.uuid4())
+    session = await camera_manager.create_session(session_id, url, camera_id, stream_type)
     
     if not session:
-        raise HTTPException(status_code=400, detail="Failed to connect to camera")
+        # Provide stream-specific error guidance
+        stream_lower = (stream_type or "unknown").lower()
+        
+        if stream_lower == "usb":
+            detail = "USB camera not found. Check: (1) Device index (usually 0, 1, or 2), (2) Camera is connected, (3) No other application is using the camera"
+        elif stream_lower == "rtsp":
+            detail = "RTSP connection failed. Check: (1) IP address is correct, (2) Camera is on the network, (3) RTSP stream path is correct (common: /stream, /main, /ch0, /preview), (4) Firewall allows RTSP (port 554)"
+        elif stream_lower == "ip":
+            detail = "IP camera connection failed. Check: (1) IP address or hostname is correct, (2) Camera is accessible on the network, (3) Camera's web interface works, (4) Correct HTTP/HTTPS port"
+        elif stream_lower == "raw":
+            detail = "Raw stream connection failed. Check: (1) Stream URL is complete and correct, (2) URL includes protocol (http://, https://, rtsp://), (3) Network connectivity to stream source"
+        else:
+            detail = "Failed to connect to camera. Check the URL format and ensure the camera/stream is accessible on the network"
+        
+        raise HTTPException(status_code=400, detail=detail)
+    
+    # Determine connection type for database
+    connection_type = stream_type or session.stream_type
     
     # Update or create camera in database
     camera = db.query(Camera).filter(
@@ -352,12 +384,15 @@ async def connect_camera(url: str, camera_id: int = 1,
     
     if not camera:
         camera = Camera(
-            name=f"Camera {camera_id}",
-            connection_type="rtsp" if "rtsp" in str(url) else "usb" if str(url).isdigit() else "http",
+            name=f"Camera {camera_id} ({connection_type.upper()})",
+            connection_type=connection_type,
             connection_url=url,
             user_id=current_user.id
         )
         db.add(camera)
+    else:
+        camera.name = f"Camera {camera_id} ({connection_type.upper()})"
+        camera.connection_type = connection_type
     
     camera.status = "connected"
     camera.session_id = session_id
@@ -366,48 +401,6 @@ async def connect_camera(url: str, camera_id: int = 1,
     camera.resolution = "1280x720"
     db.commit()
     db.refresh(camera)
-    
-    # Check if there's an active schedule and auto-start recording
-    active_schedule = scheduler_service.get_active_schedule_for_camera(camera.id)
-    auto_recording_started = False
-    
-    if active_schedule:
-        try:
-            # Auto-start recording for scheduled recording
-            filepath = recording_manager.start_recording(
-                session_id,
-                session.fps,
-                (1280, 720),
-                camera.name
-            )
-            
-            if filepath:
-                # Create database entry
-                recording = Recording(
-                    filename=os.path.basename(filepath),
-                    format="mp4",
-                    storage_path=filepath,
-                    camera_id=camera.id,
-                    user_id=current_user.id,
-                    started_at=datetime.utcnow(),
-                    is_scheduled=True
-                )
-                db.add(recording)
-                db.commit()
-                
-                auto_recording_started = True
-                logger.info(f"Auto-started recording for camera {camera.id} (schedule: {active_schedule.name})")
-                
-                # Notification
-                notification_service.create_notification(
-                    user_id=current_user.id,
-                    title="Scheduled Recording Started",
-                    message=f"Auto recording started for {camera.name} ({active_schedule.name})",
-                    type="info",
-                    data={"recording_id": recording.id, "camera_id": camera.id, "schedule_id": active_schedule.id}
-                )
-        except Exception as e:
-            logger.error(f"Error auto-starting scheduled recording: {e}")
     
     # Send notification
     notification_service.create_notification(
@@ -426,22 +419,18 @@ async def connect_camera(url: str, camera_id: int = 1,
             "camera_id": camera.id,
             "session_id": session_id,
             "name": camera.name,
-            "fps": session.fps,
-            "auto_recording": auto_recording_started
+            "stream_type": connection_type,
+            "fps": session.fps
         }
     )
     
     return {
         "session_id": session_id,
         "camera_id": camera.id,
+        "stream_type": connection_type,
         "fps": session.fps,
         "resolution": "1280x720",
-        "status": "connected",
-        "auto_recording": auto_recording_started,
-        "active_schedule": {
-            "id": active_schedule.id,
-            "name": active_schedule.name
-        } if active_schedule else None
+        "status": "connected"
     }
 
 @app.post("/api/camera/disconnect")
@@ -531,186 +520,205 @@ async def delete_camera(camera_id: int,
 # ==================== VIDEO STREAMING ====================
 
 @app.websocket("/ws/video/{session_id}")
-async def video_stream(websocket: WebSocket, session_id: str):
-    """WebSocket video streaming with optimized detection"""
-    await websocket.accept()
-    
-    detection_enabled = False
-    detection_confidence = 0.5
-    db = next(get_db())
-    frame_count = 0
-    scheduled_recording_active = False
-    
-    # Detection frequency: run detection every N frames
-    # Lower = more frequent detection, higher CPU
-    # Higher = smoother video, less frequent detection
-    DETECTION_INTERVAL = 2  # Run detection every 2 frames (better balance)
-    
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    """WebSocket video streaming - optimized for fast startup"""
     try:
+        await websocket.accept()
+        
+        detection_enabled = True  # Enable detection by default
+        detection_confidence = 0.5
+        db = next(get_db())
+        frame_count = 0
+        scheduled_recording_active = False
+        
+        # Get camera session with fast fail
         camera_session = camera_manager.get_session(session_id)
-        if not camera_session:
-            await websocket.close()
+        if not camera_session or not camera_session.connected:
+            await websocket.close(code=1008, reason="Camera not connected")
             return
         
         # Get camera from database
         camera = db.query(Camera).filter(Camera.session_id == session_id).first()
         if not camera:
-            await websocket.close()
+            await websocket.close(code=1008, reason="Camera not found")
             return
         
-        while camera_session.is_running:
-            # Check for client messages (detection control)
-            try:
-                message = await asyncio.wait_for(websocket.receive_json(), timeout=0.001)
-                if message.get('type') == 'toggle_detection':
-                    detection_enabled = message.get('enabled', False)
-                    detection_confidence = message.get('confidence', 0.5)
-                    if not detection_enabled:
-                        detection_cache.clear(session_id)
-            except asyncio.TimeoutError:
-                pass
-            
-            # Check if scheduled recording should be active (every 30 frames ~1 second)
-            if frame_count % 30 == 0:
-                try:
-                    should_record = scheduler_service.is_scheduled_recording_active(camera.id)
-                    
-                    # Start recording if scheduled and not already recording
-                    if should_record and not recording_manager.is_recording(session_id) and not scheduled_recording_active:
-                        logger.info(f"Starting scheduled recording for camera {camera.id} (session: {session_id})")
-                        filepath = recording_manager.start_recording(
-                            session_id,
-                            camera_session.fps,
-                            (1280, 720),
-                            camera.name
-                        )
-                        
-                        if filepath:
-                            recording = Recording(
-                                filename=os.path.basename(filepath),
-                                format="mp4",
-                                storage_path=filepath,
-                                camera_id=camera.id,
-                                user_id=camera.user_id,
-                                started_at=datetime.utcnow(),
-                                is_scheduled=True
-                            )
-                            db.add(recording)
-                            db.commit()
-                            scheduled_recording_active = True
-                            logger.info(f"Scheduled recording started for camera {camera.id}")
-                    
-                    # Stop recording if schedule is no longer active
-                    elif not should_record and (recording_manager.is_recording(session_id) or scheduled_recording_active):
-                        logger.info(f"Stopping scheduled recording for camera {camera.id}")
-                        recording_manager.stop_recording(session_id)
-                        scheduled_recording_active = False
-                        
-                except Exception as e:
-                    logger.error(f"Error checking scheduled recording: {e}")
-            
-            frame = await camera_session.get_frame()
-            if frame is None:
-                await asyncio.sleep(0.005)
-                continue
-            
-            frame_count += 1
-            original_frame = frame.copy()
-            display_frame = frame.copy()
-            
-            # YOLO Detection - run every N frames
-            # This keeps CPU usage reasonable while maintaining smooth video
-            if detection_enabled and frame_count % DETECTION_INTERVAL == 0:
-                try:
-                    detections = yolo_detector.detect(display_frame, detection_confidence)
-                    if detections:
-                        # Cache the detections so they persist across frames
-                        detection_cache.update(session_id, detections)
-                        
-                        # Save to database (non-blocking via asyncio)
-                        loop = asyncio.get_event_loop()
-                        loop.run_in_executor(
-                            None,
-                            lambda: _save_detections_sync(db, camera.id, detections, original_frame)
-                        )
-                except Exception as e:
-                    logger.error(f"Detection error: {e}")
-            
-            # Get cached detections (persist even if detection isn't running this frame)
-            # This eliminates blinking!
-            current_detections = detection_cache.get(session_id) if detection_enabled else []
-            
-            # Draw cached detections on EVERY frame
-            if current_detections and detection_enabled:
-                display_frame = yolo_detector.draw_detections(display_frame, current_detections)
-            
-            # Recording - record with detection boxes if detections exist
-            if recording_manager.is_recording(session_id):
-                # Create a copy for recording with detections drawn
-                recording_frame = original_frame.copy()
-                if current_detections and detection_enabled:
-                    recording_frame = yolo_detector.draw_detections(recording_frame, current_detections)
-                recording_manager.write_frame(session_id, recording_frame)
-            
-            # Encode with optimized quality
-            _, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
-            frame_b64 = base64.b64encode(buffer).decode('utf-8')
-            
-            try:
-                await asyncio.wait_for(
-                    websocket.send_json({
-                        "frame": frame_b64,
-                        "detections": current_detections,
-                        "recording": recording_manager.is_recording(session_id),
-                        "frame_count": frame_count
-                    }),
-                    timeout=0.05
+        logger.info(f"WebSocket stream started for camera {camera.id} (session: {session_id})")
+        
+        # Check if there's an active scheduled recording for this camera
+        active_schedule = scheduler_service.get_active_schedule(camera.id)
+        if active_schedule:
+            logger.info(f"Active scheduled recording detected for camera {camera.id}")
+            # Start recording automatically from schedule
+            filepath = recording_manager.start_recording(
+                session_id,
+                camera_session.fps,
+                (1280, 720),
+                camera.name
+            )
+            if filepath:
+                # Create database entry for scheduled recording
+                recording = Recording(
+                    filename=os.path.basename(filepath),
+                    format="mp4",
+                    storage_path=filepath,
+                    camera_id=camera.id,
+                    user_id=camera.owner.id,
+                    started_at=datetime.utcnow(),
+                    is_scheduled=True  # Mark as scheduled
                 )
-            except asyncio.TimeoutError:
-                logger.debug(f"WebSocket send timeout for {session_id}")
-                continue
-            
-            # Keep stream smooth - minimal sleep
-            await asyncio.sleep(0.005)  # ~200 FPS max upstream
-            
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected: {session_id}")
+                db.add(recording)
+                db.commit()
+                scheduled_recording_active = True
+                logger.info(f"Scheduled recording started for camera {camera.id}")
+        
+        # Send immediate "ready" message
+        await websocket.send_json({
+            "type": "stream_ready",
+            "fps": camera_session.fps,
+            "resolution": "1280x720"
+        })
+        
+        DETECTION_INTERVAL = 3  # Run detection every 3 frames
+        frame_skip_count = 0
+        
+        try:
+            while camera_session.is_running and camera_session.connected:
+                # Non-blocking check for client messages
+                try:
+                    message = await asyncio.wait_for(websocket.receive_json(), timeout=0.001)
+                    if message.get('type') == 'toggle_detection':
+                        detection_enabled = message.get('enabled', False)
+                        detection_confidence = message.get('confidence', 0.5)
+                        if not detection_enabled:
+                            detection_cache.clear(session_id)
+                        logger.info(f"Detection {'enabled' if detection_enabled else 'disabled'}")
+                except asyncio.TimeoutError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"Error receiving message: {e}")
+                    break
+                
+                # Get frame
+                frame = await camera_session.get_frame()
+                if frame is None:
+                    await asyncio.sleep(0.001)
+                    continue
+                
+                frame_count += 1
+                frame_skip_count += 1
+                
+                # Make a copy for recording (with detections drawn on it)
+                recording_frame = frame.copy()
+                
+                # Minimal processing - only encode and send
+                try:
+                    # JPEG encoding with lower quality for speed
+                    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                    
+                    # Prepare message
+                    message = {
+                        "frame": frame_base64,
+                        "fps": camera_session.fps,
+                        "timestamp": time.time()
+                    }
+                    
+                    # YOLO Detection - run every N frames to avoid blocking
+                    if detection_enabled and frame_skip_count % DETECTION_INTERVAL == 0:
+                        try:
+                            detections = yolo_detector.detect(frame, detection_confidence)
+                            if detections:
+                                detection_cache.update(session_id, detections)
+                                message["detections"] = len(detections)
+                                message["detection_data"] = detections  # Send full detection data
+                                
+                                # Async database write
+                                loop = asyncio.get_event_loop()
+                                loop.run_in_executor(
+                                    None,
+                                    lambda: _save_detections_sync(camera.id, detections, frame)
+                                )
+                        except Exception as e:
+                            logger.error(f"Detection error: {e}")
+                    
+                    # Get cached detections
+                    cached = detection_cache.get(session_id)
+                    if cached:
+                        message["cached_detections"] = len(cached)
+                        message["cached_detection_data"] = cached  # Send cached detection data
+                    
+                    # Draw cached detections on recording frame
+                    if cached:
+                        recording_frame = yolo_detector.draw_detections(recording_frame, cached)
+                    
+                    # Write to recording if active
+                    if recording_manager.is_recording(session_id):
+                        recording_manager.write_frame(session_id, recording_frame)
+                    
+                    # Send frame
+                    await websocket.send_json(message)
+                    
+                except Exception as e:
+                    logger.error(f"Error encoding/sending frame: {e}")
+                    break
+        
+        except Exception as e:
+            logger.error(f"Stream error: {e}")
+        finally:
+            logger.info(f"WebSocket stream ended for camera {camera.id}")
+    
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
-    finally:
-        detection_cache.clear(session_id)
-        db.close()
+
+async def video_stream(websocket: WebSocket, session_id: str):
+    """Alias for websocket_endpoint - maintained for backward compatibility"""
+    await websocket_endpoint(websocket, session_id)
 
 
-def _save_detections_sync(db: Session, camera_id: int, detections: List[Dict], frame: np.ndarray):
-    """Save detections to database (sync, runs in thread pool)"""
+def _save_detections_sync(camera_id: int, detections, frame):
+    """
+    This runs in a background thread.
+    It MUST create its own DB session.
+    
+    Args:
+        camera_id: Camera ID for the detection
+        detections: List of detection dictionaries from YOLO detector
+        frame: The frame where detections were found (for saving detected objects)
+    """
+
+    db: Session = SessionLocal()
+
     try:
         for det in detections:
-            try:
-                screenshot_path = yolo_detector.save_detection(frame, det)
-                detection_record = Detection(
-                    camera_id=camera_id,
-                    class_name=det['class_name'],
-                    confidence=det['confidence'],
-                    bbox_x1=det['bbox']['x1'],
-                    bbox_y1=det['bbox']['y1'],
-                    bbox_x2=det['bbox']['x2'],
-                    bbox_y2=det['bbox']['y2'],
-                    screenshot_path=screenshot_path,
-                    detected_at=datetime.utcnow()
-                )
-                db.add(detection_record)
-            except Exception as e:
-                logger.error(f"Error saving detection: {e}")
+            # Extract detections from YOLO format
+            bbox = det.get("bbox", {})
+            
+            detection = Detection(
+                camera_id=camera_id,
+                label=det.get("class_name", "unknown"),
+                confidence=det.get("confidence", 0.0),
+                x1=bbox.get("x1", 0),
+                y1=bbox.get("y1", 0),
+                x2=bbox.get("x2", 0),
+                y2=bbox.get("y2", 0),
+            )
+            db.add(detection)
+
         db.commit()
+
     except Exception as e:
-        logger.error(f"Error committing detections: {e}")
         db.rollback()
+        logger.error(f"Error committing detections: {e}")
+
+    finally:
+        db.close()
 
 # ==================== RECORDING MANAGEMENT ====================
 
 @app.post("/api/recording/start")
 async def start_recording(session_id: str,
+                         schedule_id: Optional[int] = None,
                          current_user: User = Depends(get_current_active_user),
                          db: Session = Depends(get_db)):
     """Start recording"""
@@ -744,7 +752,8 @@ async def start_recording(session_id: str,
         storage_path=filepath,
         camera_id=camera.id,
         user_id=current_user.id,
-        started_at=datetime.utcnow()
+        started_at=datetime.utcnow(),
+        is_scheduled=(schedule_id is not None)  # Mark as scheduled if schedule_id provided
     )
     db.add(recording)
     db.commit()
@@ -754,22 +763,23 @@ async def start_recording(session_id: str,
     notification_service.create_notification(
         user_id=current_user.id,
         title="Recording Started",
-        message=f"Recording started for {camera.name}",
+        message=f"Recording started for {camera.name}" + (" (Scheduled)" if schedule_id else ""),
         type="info",
-        data={"recording_id": recording.id, "camera_id": camera.id}
+        data={"recording_id": recording.id, "camera_id": camera.id, "schedule_id": schedule_id}
     )
     
     # Broadcast
     await websocket_manager.broadcast_to_user(
         current_user.id,
         "recording_started",
-        {"recording_id": recording.id, "camera_id": camera.id}
+        {"recording_id": recording.id, "camera_id": camera.id, "schedule_id": schedule_id}
     )
     
     return {
         "recording_id": recording.id,
         "filename": recording.filename,
-        "started_at": recording.started_at
+        "started_at": recording.started_at,
+        "is_scheduled": recording.is_scheduled
     }
 
 @app.post("/api/recording/stop")

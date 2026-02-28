@@ -16,22 +16,30 @@ export function useRealTimeData() {
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
+
+    const handleOpen = () => {
+      setIsConnected(true);
+    };
+
+    const handleClose = () => {
+      setIsConnected(false);
+    };
 
     // Connect to real-time updates WebSocket
-    const ws = websocketService.connect(
-      'updates',
-      user.id,
-      (message) => {
-        handleWebSocketMessage(message);
-      },
-      (error) => {
-        console.error('WebSocket error:', error);
-        setIsConnected(false);
-      }
-    );
-
-    setIsConnected(true);
+    setTimeout(() => {
+      websocketService.connect(
+        'updates',
+        user.id,
+        (message) => handleWebSocketMessage(message),
+        (error) => {
+          console.error('WebSocket error:', error);
+          handleClose();
+        },
+        handleOpen,
+        handleClose
+      );
+    }, 1000);
 
     return () => {
       websocketService.disconnect('updates', user.id);
@@ -43,7 +51,10 @@ export function useRealTimeData() {
 
     switch (type) {
       case 'camera_connected':
-        setStats(prev => ({ ...prev, active_cameras: prev.active_cameras + 1 }));
+        setStats((prev) => ({
+          ...prev,
+          active_cameras: prev.active_cameras + 1,
+        }));
         notificationService.notify({
           title: 'Camera Connected',
           message: `Camera ${data.name} connected successfully`,
@@ -52,7 +63,10 @@ export function useRealTimeData() {
         break;
 
       case 'camera_disconnected':
-        setStats(prev => ({ ...prev, active_cameras: Math.max(0, prev.active_cameras - 1) }));
+        setStats((prev) => ({
+          ...prev,
+          active_cameras: Math.max(0, prev.active_cameras - 1),
+        }));
         notificationService.notify({
           title: 'Camera Disconnected',
           message: 'Camera disconnected',
@@ -69,7 +83,10 @@ export function useRealTimeData() {
         break;
 
       case 'recording_stopped':
-        setStats(prev => ({ ...prev, total_recordings: prev.total_recordings + 1 }));
+        setStats((prev) => ({
+          ...prev,
+          total_recordings: prev.total_recordings + 1,
+        }));
         notificationService.notify({
           title: 'Recording Stopped',
           message: `Recording saved (${data.duration}s)`,
@@ -78,7 +95,10 @@ export function useRealTimeData() {
         break;
 
       case 'detection_alert':
-        setStats(prev => ({ ...prev, total_detections: prev.total_detections + 1 }));
+        setStats((prev) => ({
+          ...prev,
+          total_detections: prev.total_detections + 1,
+        }));
         toast.success(`${data.class_name} detected!`, {
           icon: '👁️',
           duration: 4000,

@@ -14,6 +14,8 @@ import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
 
 import { useAuthStore } from './store/authStore';
+import { useEffect } from 'react';
+import { authAPI } from './services/api';
 
 const queryClient = new QueryClient();
 
@@ -24,6 +26,24 @@ function ProtectedRoute({ children }) {
 }
 
 export default function App() {
+  const user = useAuthStore((state) => state.user);
+  const token = useAuthStore((state) => state.token);
+  const setAuth = useAuthStore((state) => state.setAuth);
+
+  useEffect(() => {
+    // If token exists but user is missing, fetch user profile
+    if (token && !user) {
+      authAPI.getMe()
+        .then((response) => {
+          setAuth(response.data, token);
+        })
+        .catch(() => {
+          // If token is invalid, force logout
+          setAuth(null, null);
+        });
+    }
+  }, [token, user, setAuth]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

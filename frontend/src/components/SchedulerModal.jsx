@@ -148,24 +148,55 @@ export default function SchedulerModal({
 
                 {/* Camera Selection */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-3">
                     Select Camera
                   </label>
-                  <select
-                    value={formData.camera_id}
-                    onChange={(e) =>
-                      setFormData({ ...formData, camera_id: e.target.value })
-                    }
-                    required
-                    className="input-field"
-                  >
-                    <option value="">Choose a camera...</option>
-                    {cameras.map((camera) => (
-                      <option key={camera.id} value={camera.id}>
-                        {camera.name} ({camera.connection_type})
-                      </option>
-                    ))}
-                  </select>
+                  <div className="space-y-2">
+                    {cameras.length === 0 ? (
+                      <div className="p-4 bg-dark-400/50 border border-red-500/30 rounded-lg text-center">
+                        <p className="text-sm text-red-400">No cameras available. Please connect a camera first.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-2">
+                        {cameras.map((camera) => (
+                          <label
+                            key={camera.id}
+                            className={`flex items-center p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                              String(formData.camera_id) === String(camera.id)
+                                ? 'border-primary-500 bg-primary-500/10'
+                                : 'border-gray-600 bg-dark-400/30 hover:border-gray-500'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="camera"
+                              value={camera.id}
+                              checked={String(formData.camera_id) === String(camera.id)}
+                              onChange={(e) =>
+                                setFormData({ ...formData, camera_id: e.target.value })
+                              }
+                              className="w-4 h-4 cursor-pointer"
+                            />
+                            <div className="ml-3 flex-1">
+                              <div className="font-medium text-white text-sm">{camera.name}</div>
+                              <div className="text-xs text-gray-400">
+                                {camera.connection_type.toUpperCase()} • {camera.connection_url}
+                              </div>
+                              <div className="text-xs mt-1">
+                                <span className={`inline-block px-2 py-0.5 rounded ${
+                                  camera.status === 'connected' 
+                                    ? 'bg-green-500/20 text-green-400' 
+                                    : 'bg-red-500/20 text-red-400'
+                                }`}>
+                                  {camera.status === 'connected' ? '● Connected' : '● Disconnected'}
+                                </span>
+                              </div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Days */}
