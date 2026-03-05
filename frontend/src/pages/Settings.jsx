@@ -16,6 +16,12 @@ export default function Settings() {
     organization: '',
   });
 
+  const [passwordData, setPasswordData] = useState({
+    old_password: '',
+    new_password: '',
+    confirm_password: '',
+  });
+
   const [loading, setLoading] = useState(false);
 
   // Load user data into state when component loads
@@ -30,10 +36,18 @@ export default function Settings() {
 
   // Handle input change
   const handleChange = (e) => {
-    setProfileData({
-      ...profileData,
-      [e.target.name]: e.target.value,
-    });
+    const { name, value } = e.target;
+    if (name.includes('password')) {
+      setPasswordData({
+        ...passwordData,
+        [name]: value,
+      });
+    } else {
+      setProfileData({
+        ...profileData,
+        [name]: value,
+      });
+    }
   };
 
   // Save Profile Changes
@@ -58,6 +72,65 @@ export default function Settings() {
     } catch (error) {
       console.error(error);
       toast.error('Failed to update profile');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Password Change
+  const handleChangePassword = async () => {
+    // Validate form
+    if (!passwordData.old_password || !passwordData.new_password || !passwordData.confirm_password) {
+      toast.error('Please fill in all password fields');
+      return;
+    }
+
+    if (passwordData.new_password !== passwordData.confirm_password) {
+      toast.error('New passwords do not match');
+      return;
+    }
+
+    if (passwordData.new_password.length < 8) {
+      toast.error('New password must be at least 8 characters long');
+      return;
+    }
+
+    if (passwordData.old_password === passwordData.new_password) {
+      toast.error('New password cannot be the same as old password');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      await axios.post(
+        'http://localhost:8000/api/users/change-password',
+        {
+          old_password: passwordData.old_password,
+          new_password: passwordData.new_password,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+          },
+        }
+      );
+
+      // Clear password fields
+      setPasswordData({
+        old_password: '',
+        new_password: '',
+        confirm_password: '',
+      });
+
+      toast.success('Password changed successfully!');
+    } catch (error) {
+      console.error(error);
+      if (error.response?.status === 401) {
+        toast.error('Old password is incorrect');
+      } else {
+        toast.error('Failed to change password');
+      }
     } finally {
       setLoading(false);
     }
@@ -162,7 +235,65 @@ export default function Settings() {
                 <h2 className="text-xl font-semibold text-white mb-6">
                   Security Settings
                 </h2>
-                <p className="text-gray-400">Coming soon...</p>
+                <div className="max-w-md">
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mb-6">
+                    <p className="text-blue-300 text-sm">
+                      🔒 Keep your account secure by regularly updating your password.
+                    </p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Current Password
+                      </label>
+                      <input
+                        type="password"
+                        name="old_password"
+                        value={passwordData.old_password}
+                        onChange={handleChange}
+                        placeholder="Enter your current password"
+                        className="input-field"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        New Password
+                      </label>
+                      <input
+                        type="password"
+                        name="new_password"
+                        value={passwordData.new_password}
+                        onChange={handleChange}
+                        placeholder="Enter new password (min 8 characters)"
+                        className="input-field"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Confirm New Password
+                      </label>
+                      <input
+                        type="password"
+                        name="confirm_password"
+                        value={passwordData.confirm_password}
+                        onChange={handleChange}
+                        placeholder="Confirm your new password"
+                        className="input-field"
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleChangePassword}
+                      className="btn-primary w-full"
+                      disabled={loading}
+                    >
+                      {loading ? 'Changing Password...' : 'Change Password'}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 

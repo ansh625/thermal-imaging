@@ -193,32 +193,6 @@ async def get_me(current_user: User = Depends(get_current_active_user)):
         "organization": current_user.organization
     }
 
-@app.put("/api/users/update-profile")
-async def update_profile(
-    request: dict = Body(...),
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
-):
-    """Update user profile information"""
-    full_name = request.get("full_name")
-    organization = request.get("organization")
-    
-    if full_name:
-        current_user.full_name = full_name
-    if organization:
-        current_user.organization = organization
-    
-    db.commit()
-    db.refresh(current_user)
-    
-    return {
-        "id": current_user.id,
-        "email": current_user.email,
-        "full_name": current_user.full_name,
-        "role": current_user.role,
-        "organization": current_user.organization
-    }
-
 @app.post("/api/auth/forgot-password")
 async def forgot_password(email: str, 
                          background_tasks: BackgroundTasks,
@@ -362,6 +336,69 @@ async def get_forgot_password_code(email: str,
     except Exception as e:
         logger.error(f"✗ Error generating reset code for {email}: {e}")
         raise HTTPException(status_code=500, detail=f"Error generating reset code: {str(e)}")
+
+# ==================== USER PROFILE & SECURITY ====================
+
+# Pydantic models for user endpoints
+class UpdateProfileRequest(BaseModel):
+    full_name: Optional[str] = None
+    organization: Optional[str] = None
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+@app.put("/api/users/update-profile")
+async def update_profile(
+    profile_data: UpdateProfileRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update user profile information (name, organization)"""
+    try:
+        if profile_data.full_name:
+            current_user.full_name = profile_data.full_name
+        if profile_data.organization is not None:
+            current_user.organization = profile_data.organization
+        
+        db.commit()
+        db.refresh(current_user)
+        
+        return {
+            "id": current_user.id,
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "organization": current_user.organization,
+            "role": current_user.role
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating profile for user {current_user.id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update profile")
+
+@app.post("/api/users/change-password")
+async def change_password(
+    password_data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Change user password (requires old password verification)"""
+    try:
+        # Verify old password
+        if not verify_password(password_data.old_password, current_user.hashed_password):
+            raise HTTPException(status_code=401, detail="Old password is incorrect")
+        
+        # Update with new password hash
+        current_user.hashed_password = get_password_hash(password_data.new_password)
+        db.commit()
+        
+        return {"message": "Password changed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error changing password for user {current_user.id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to change password")
 
 # ==================== CAMERA MANAGEMENT ====================
 
