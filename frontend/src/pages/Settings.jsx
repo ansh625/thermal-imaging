@@ -1,19 +1,72 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import Navbar from '../components/Navbar';
 import { User, Lock, Bell, Database } from 'lucide-react';
 import toast from 'react-hot-toast';
+import axios from 'axios';
 
 export default function Settings() {
-  const { user } = useAuthStore();
+  const { user, setUser } = useAuthStore();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('profile');
+
+  const [profileData, setProfileData] = useState({
+    full_name: '',
+    organization: '',
+  });
+
+  const [loading, setLoading] = useState(false);
+
+  // Load user data into state when component loads
+  useEffect(() => {
+    if (user) {
+      setProfileData({
+        full_name: user.full_name || '',
+        organization: user.organization || '',
+      });
+    }
+  }, [user]);
+
+  // Handle input change
+  const handleChange = (e) => {
+    setProfileData({
+      ...profileData,
+      [e.target.name]: e.target.value,
+    });
+  };
+
+  // Save Profile Changes
+  const handleSaveProfile = async () => {
+    try {
+      setLoading(true);
+
+      const response = await axios.put(
+        'http://localhost:8000/api/users/update-profile',
+        profileData,
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+          },
+        }
+      );
+
+      // Update Zustand store
+      setUser(response.data);
+
+      toast.success('Profile updated successfully!');
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to update profile');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-dark-500">
       <Navbar />
-      
+
       <div className="p-6">
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-white mb-2">Settings</h1>
@@ -50,7 +103,10 @@ export default function Settings() {
           <div className="col-span-3 glass-dark rounded-xl p-6 border border-white/10">
             {activeTab === 'profile' && (
               <div>
-                <h2 className="text-xl font-semibold text-white mb-6">Profile Information</h2>
+                <h2 className="text-xl font-semibold text-white mb-6">
+                  Profile Information
+                </h2>
+
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -58,87 +114,73 @@ export default function Settings() {
                     </label>
                     <input
                       type="text"
-                      defaultValue={user?.full_name}
+                      name="full_name"
+                      value={profileData.full_name}
+                      onChange={handleChange}
                       className="input-field"
                     />
                   </div>
+
                   <div>
                     <label className="block text-sm font-medium text-gray-300 mb-2">
                       Email
                     </label>
                     <input
                       type="email"
-                      defaultValue={user?.email}
+                      value={user?.email}
                       className="input-field"
                       disabled
                     />
                   </div>
+
                   <div>
                     <label className="block text-sm font-medium text-gray-300 mb-2">
                       Organization
                     </label>
                     <input
                       type="text"
-                      defaultValue={user?.organization}
+                      name="organization"
+                      value={profileData.organization}
+                      onChange={handleChange}
                       className="input-field"
                     />
                   </div>
-                  <button className="btn-primary">Save Changes</button>
+
+                  <button
+                    onClick={handleSaveProfile}
+                    className="btn-primary"
+                    disabled={loading}
+                  >
+                    {loading ? 'Saving...' : 'Save Changes'}
+                  </button>
                 </div>
               </div>
             )}
 
             {activeTab === 'security' && (
               <div>
-                <h2 className="text-xl font-semibold text-white mb-6">Security Settings</h2>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Current Password
-                    </label>
-                    <input type="password" className="input-field" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      New Password
-                    </label>
-                    <input type="password" className="input-field" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Confirm New Password
-                    </label>
-                    <input type="password" className="input-field" />
-                  </div>
-                  <button className="btn-primary">Update Password</button>
-                </div>
+                <h2 className="text-xl font-semibold text-white mb-6">
+                  Security Settings
+                </h2>
+                <p className="text-gray-400">Coming soon...</p>
               </div>
             )}
 
             {activeTab === 'notifications' && (
               <div>
-                <h2 className="text-xl font-semibold text-white mb-6">Notification Preferences</h2>
-                <div className="space-y-4">
-                  {[
-                    'Camera connection alerts',
-                    'Detection notifications',
-                    'Recording status updates',
-                    'System alerts',
-                  ].map((item) => (
-                    <label key={item} className="flex items-center gap-3 cursor-pointer">
-                      <input type="checkbox" defaultChecked className="w-5 h-5" />
-                      <span className="text-gray-300">{item}</span>
-                    </label>
-                  ))}
-                  <button className="btn-primary mt-6">Save Preferences</button>
-                </div>
+                <h2 className="text-xl font-semibold text-white mb-6">
+                  Notification Preferences
+                </h2>
+                <p className="text-gray-400">Coming soon...</p>
               </div>
             )}
 
             {activeTab === 'storage' && (
               <div>
-                <h2 className="text-xl font-semibold text-white mb-6">Storage Management</h2>
-                <p className="text-gray-400 mb-4">Coming soon...</p>
+                <h2 className="text-xl font-semibold text-white mb-6">
+                  Storage Management
+                </h2>
+                <p className="text-gray-400">Coming soon...</p>
               </div>
             )}
           </div>
