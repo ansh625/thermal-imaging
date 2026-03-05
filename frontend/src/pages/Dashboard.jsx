@@ -113,7 +113,15 @@ export default function Dashboard() {
     setScreenshotLoading(true);
     try {
       const response = await screenshotAPI.capture(sessionId);
-      toast.success('Screenshot captured successfully');
+      const detectionsCount = response.data.detections_included || 0;
+      const message = detectionsCount > 0 
+        ? `Screenshot captured with ${detectionsCount} detection${detectionsCount !== 1 ? 's' : ''}`
+        : 'Screenshot captured successfully';
+      
+      toast.success(message, {
+        icon: '📸',
+        duration: 4000,
+      });
     } catch (error) {
       console.error('Screenshot error:', error);
       toast.error(error.response?.data?.detail || 'Screenshot failed');

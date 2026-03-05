@@ -105,6 +105,17 @@ export function useRealTimeData() {
         });
         break;
 
+      case 'screenshot_taken':
+        const screenshotMsg = data.detections > 0 
+          ? `Screenshot saved with ${data.detections} detection${data.detections !== 1 ? 's' : ''}`
+          : 'Screenshot saved successfully';
+        notificationService.notify({
+          title: 'Screenshot Captured',
+          message: screenshotMsg,
+          type: 'success',
+        });
+        break;
+
       case 'stats_update':
         setStats(data);
         break;

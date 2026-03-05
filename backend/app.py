@@ -937,7 +937,7 @@ async def list_detections(limit: int = 100,
 async def capture_screenshot(session_id: str,
                             current_user: User = Depends(get_current_active_user),
                             db: Session = Depends(get_db)):
-    """Capture and save a screenshot from live stream"""
+    """Capture and save a screenshot from live stream with bounding boxes and labels"""
     camera_session = camera_manager.get_session(session_id)
     if not camera_session:
         raise HTTPException(status_code=404, detail="Camera session not found")
@@ -955,6 +955,15 @@ async def capture_screenshot(session_id: str,
     if frame is None:
         raise HTTPException(status_code=400, detail="No frame available")
     
+    # Make a copy for screenshot
+    screenshot_frame = frame.copy()
+    
+    # Get cached detections and draw them on the screenshot
+    cached_detections = detection_cache.get(session_id)
+    if cached_detections and len(cached_detections) > 0:
+        screenshot_frame = yolo_detector.draw_detections(screenshot_frame, cached_detections)
+        logger.info(f"Screenshot will include {len(cached_detections)} detections")
+    
     # Save screenshot
     try:
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -964,7 +973,8 @@ async def capture_screenshot(session_id: str,
         filename = f"{camera.name}_{timestamp}.jpg"
         filepath = os.path.join(screenshot_dir, filename)
         
-        cv2.imwrite(filepath, frame)
+        # Save as JPG with quality settings
+        cv2.imwrite(filepath, screenshot_frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
         
         logger.info(f"Screenshot saved: {filepath}")
         
@@ -972,13 +982,14 @@ async def capture_screenshot(session_id: str,
         await websocket_manager.broadcast_to_user(
             current_user.id,
             "screenshot_taken",
-            {"filename": filename, "path": filepath, "camera_id": camera.id}
+            {"filename": filename, "path": filepath, "camera_id": camera.id, "detections": len(cached_detections) if cached_detections else 0}
         )
         
         return {
             "message": "Screenshot captured successfully",
             "filename": filename,
-            "path": filepath
+            "path": filepath,
+            "detections_included": len(cached_detections) if cached_detections else 0
         }
         
     except Exception as e:
