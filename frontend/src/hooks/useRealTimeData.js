@@ -94,6 +94,35 @@ export function useRealTimeData() {
         });
         break;
 
+      case 'scheduled_recording_started':
+        toast.success(`📅 Scheduled recording started`, {
+          icon: '⏹️',
+          duration: 4000,
+        });
+        notificationService.notify({
+          title: 'Scheduled Recording Started',
+          message: `Scheduled recording started automatically - ${data.filename || 'camera'}`,
+          type: 'info',
+        });
+        break;
+
+      case 'scheduled_recording_stopped':
+        setStats((prev) => ({
+          ...prev,
+          total_recordings: prev.total_recordings + 1,
+        }));
+        const fileSizeStr = data.file_size_mb ? ` (${data.file_size_mb}MB)` : '';
+        toast.success(`📅 Scheduled recording saved${fileSizeStr}`, {
+          icon: '✅',
+          duration: 5000,
+        });
+        notificationService.notify({
+          title: 'Scheduled Recording Saved',
+          message: `Scheduled recording saved - ${data.duration}s${fileSizeStr}`,
+          type: 'success',
+        });
+        break;
+
       case 'detection_alert':
         setStats((prev) => ({
           ...prev,

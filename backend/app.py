@@ -546,7 +546,21 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         logger.info(f"WebSocket stream started for camera {camera.id} (session: {session_id})")
         
         # Check if there's an active scheduled recording for this camera
+        # First check if a schedule was triggered by APScheduler
         active_schedule = scheduler_service.get_active_schedule(camera.id)
+        
+        # If no triggered schedule, check if a schedule SHOULD be active based on current time
+        if not active_schedule:
+            schedule_obj = scheduler_service.get_active_schedule_for_camera(camera.id)
+            if schedule_obj:
+                logger.info(f"Schedule should be active for camera {camera.id} based on current time")
+                active_schedule = {
+                    'schedule_id': schedule_obj.id,
+                    'started_at': datetime.now()
+                }
+                # Also mark it as triggered in the scheduler
+                scheduler_service.active_scheduled_recordings[camera.id] = active_schedule
+        
         if active_schedule:
             logger.info(f"Active scheduled recording detected for camera {camera.id}")
             # Start recording automatically from schedule
@@ -569,8 +583,34 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 )
                 db.add(recording)
                 db.commit()
+                db.refresh(recording)
                 scheduled_recording_active = True
                 logger.info(f"Scheduled recording started for camera {camera.id}")
+                
+                # Create notification for scheduled recording started
+                notification_service.create_notification(
+                    user_id=camera.owner.id,
+                    title="Scheduled Recording Started",
+                    message=f"Scheduled recording started for {camera.name}",
+                    type="info",
+                    data={
+                        "recording_id": recording.id,
+                        "camera_id": camera.id,
+                        "is_scheduled": True
+                    }
+                )
+                
+                # Broadcast scheduled recording start to user
+                await websocket_manager.broadcast_to_user(
+                    camera.owner.id,
+                    "scheduled_recording_started",
+                    {
+                        "recording_id": recording.id,
+                        "camera_id": camera.id,
+                        "filename": recording.filename,
+                        "message": f"Scheduled recording started: {recording.filename}"
+                    }
+                )
         
         # Send immediate "ready" message
         await websocket.send_json({
@@ -582,8 +622,70 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         DETECTION_INTERVAL = 3  # Run detection every 3 frames
         frame_skip_count = 0
         
+        # Get schedule end time if recording is scheduled
+        schedule_end_time = None
+        if scheduled_recording_active and active_schedule:
+            try:
+                db_check = next(get_db())
+                schedule_obj = db_check.query(RecordingSchedule).filter(
+                    RecordingSchedule.id == active_schedule['schedule_id']
+                ).first()
+                if schedule_obj:
+                    end_hour, end_minute = map(int, schedule_obj.end_time.split(':'))
+                    schedule_end_time = datetime.now().replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+                    logger.info(f"✓ Scheduled recording will end at {schedule_end_time}")
+                db_check.close()
+            except Exception as e:
+                logger.warning(f"Could not get schedule end time: {e}")
+        
         try:
             while camera_session.is_running and camera_session.connected:
+                # Check if scheduled recording should stop
+                if scheduled_recording_active and schedule_end_time and recording_manager.is_recording(session_id):
+                    if datetime.now() >= schedule_end_time:
+                        logger.info(f"⏹️ Schedule end time reached for camera {camera.id}, stopping recording")
+                        stats = recording_manager.stop_recording(session_id)
+                        if stats:
+                            # Update database
+                            recording_obj = db.query(Recording).filter(
+                                Recording.filename == stats['filename'],
+                                Recording.user_id == camera.owner.id
+                            ).first()
+                            
+                            if recording_obj:
+                                recording_obj.duration_seconds = stats['duration_seconds']
+                                recording_obj.file_size_bytes = stats['file_size_bytes']
+                                recording_obj.ended_at = stats['ended_at']
+                                db.commit()
+                                
+                                # Create notification for scheduled recording stopped
+                                notification_service.create_notification(
+                                    user_id=camera.owner.id,
+                                    title="Scheduled Recording Saved",
+                                    message=f"Scheduled recording saved - {stats['duration_seconds']}s ({stats.get('file_size_mb', 0)}MB)",
+                                    type="success",
+                                    data={
+                                        "recording_id": recording_obj.id,
+                                        "is_scheduled": True,
+                                        "file_size_mb": stats.get('file_size_mb', 0)
+                                    }
+                                )
+                                
+                                # Broadcast scheduled recording stopped
+                                await websocket_manager.broadcast_to_user(
+                                    camera.owner.id,
+                                    "scheduled_recording_stopped",
+                                    {
+                                        "recording_id": recording_obj.id,
+                                        "duration": stats['duration_seconds'],
+                                        "file_size_mb": stats.get('file_size_mb', 0),
+                                        "is_scheduled": True
+                                    }
+                                )
+                        
+                        # Clear active schedule
+                        scheduler_service.clear_active_schedule(camera.id)
+                        scheduled_recording_active = False
                 # Non-blocking check for client messages
                 try:
                     message = await asyncio.wait_for(websocket.receive_json(), timeout=0.001)
@@ -1015,6 +1117,23 @@ async def create_schedule(camera_id: int = Query(...),
     if not camera:
         raise HTTPException(status_code=404, detail="Camera not found")
     
+    # Validate time format
+    try:
+        start_hour, start_minute = map(int, start_time.split(':'))
+        end_hour, end_minute = map(int, end_time.split(':'))
+        if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59):
+            raise ValueError("Invalid start time")
+        if not (0 <= end_hour <= 23 and 0 <= end_minute <= 59):
+            raise ValueError("Invalid end time")
+    except (ValueError, IndexError):
+        raise HTTPException(status_code=400, detail="Time format must be HH:MM (24-hour format)")
+    
+    # Validate days
+    valid_days = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'}
+    invalid_days = set(days_of_week) - valid_days
+    if invalid_days:
+        raise HTTPException(status_code=400, detail=f"Invalid days: {', '.join(invalid_days)}")
+    
     schedule = RecordingSchedule(
         camera_id=camera_id,
         name=name,
@@ -1027,13 +1146,28 @@ async def create_schedule(camera_id: int = Query(...),
     db.commit()
     db.refresh(schedule)
     
+    logger.info(f"Schedule created: {name} (ID: {schedule.id}) - Days: {days_of_week}, Time: {start_time}-{end_time}")
+    
     # Add to scheduler
     scheduler_service.add_schedule(schedule.id)
+    
+    # Check if schedule should be active immediately
+    current_time = datetime.now()
+    current_day = current_time.strftime('%A')
+    current_time_obj = current_time.time()
+    
+    schedule_start = datetime.strptime(start_time, '%H:%M').time()
+    schedule_end = datetime.strptime(end_time, '%H:%M').time()
+    
+    is_active_now = (
+        current_day in days_of_week and
+        schedule_start <= current_time_obj <= schedule_end
+    )
     
     notification_service.create_notification(
         user_id=current_user.id,
         title="Schedule Created",
-        message=f"Recording schedule '{name}' created",
+        message=f"Recording schedule '{name}' created" + (" - Recording now!" if is_active_now else ""),
         type="success",
         data={"schedule_id": schedule.id}
     )

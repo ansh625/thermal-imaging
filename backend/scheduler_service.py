@@ -22,11 +22,17 @@ class SchedulerService:
             ).first()
             
             if not schedule or not schedule.enabled:
+                logger.warning(f"Schedule {schedule_id} not found or disabled")
                 return False
             
             # Parse time
             start_hour, start_minute = map(int, schedule.start_time.split(':'))
             end_hour, end_minute = map(int, schedule.end_time.split(':'))
+            
+            logger.info(f"Adding schedule: {schedule.name}")
+            logger.info(f"  Days: {schedule.days_of_week}")
+            logger.info(f"  Start: {start_hour:02d}:{start_minute:02d}")
+            logger.info(f"  End: {end_hour:02d}:{end_minute:02d}")
             
             # Convert days to APScheduler format
             day_map = {
@@ -35,29 +41,37 @@ class SchedulerService:
             }
             days_str = ','.join([day_map[day] for day in schedule.days_of_week if day in day_map])
             
+            logger.info(f"  APScheduler days_str: {days_str}")
+            
+            if not days_str:
+                logger.error(f"No valid days for schedule {schedule_id}")
+                return False
+            
             # Schedule start
-            self.scheduler.add_job(
+            job_start = self.scheduler.add_job(
                 self._start_scheduled_recording,
                 CronTrigger(day_of_week=days_str, hour=start_hour, minute=start_minute),
                 args=[schedule.camera_id, schedule_id],
                 id=f"start_{schedule_id}",
                 replace_existing=True
             )
+            logger.info(f"✓ Start job created: {job_start.id}")
             
             # Schedule stop
-            self.scheduler.add_job(
+            job_stop = self.scheduler.add_job(
                 self._stop_scheduled_recording,
                 CronTrigger(day_of_week=days_str, hour=end_hour, minute=end_minute),
                 args=[schedule.camera_id, schedule_id],
                 id=f"stop_{schedule_id}",
                 replace_existing=True
             )
+            logger.info(f"✓ Stop job created: {job_stop.id}")
             
-            logger.info(f"Schedule added: {schedule.name} (ID: {schedule_id})")
+            logger.info(f"✓ Schedule added: {schedule.name} (ID: {schedule_id})")
             return True
             
         except Exception as e:
-            logger.error(f"Error adding schedule: {e}")
+            logger.error(f"Error adding schedule: {e}", exc_info=True)
             return False
     
     def remove_schedule(self, schedule_id: int):
@@ -130,19 +144,32 @@ class SchedulerService:
                 RecordingSchedule.enabled == True
             ).all()
             
+            logger.debug(f"Checking {len(schedules)} schedules for camera {camera_id}")
+            logger.debug(f"Current time: {current_day} {current_time.strftime('%H:%M:%S')}")
+            
             # Check if any schedule is active now
             for schedule in schedules:
+                logger.debug(f"  Schedule '{schedule.name}': days={schedule.days_of_week}, time={schedule.start_time}-{schedule.end_time}")
+                
                 if current_day in schedule.days_of_week:
                     start_time = datetime.strptime(schedule.start_time, '%H:%M').time()
                     end_time = datetime.strptime(schedule.end_time, '%H:%M').time()
                     
+                    logger.debug(f"    Day matches! Checking time: {start_time} <= {current_time} <= {end_time}")
+                    
                     # Check if current time is within schedule window
                     if start_time <= current_time <= end_time:
+                        logger.info(f"✓ Schedule '{schedule.name}' is ACTIVE for camera {camera_id}")
                         return schedule
+                    else:
+                        logger.debug(f"    Time not in range")
+                else:
+                    logger.debug(f"    Day {current_day} not in {schedule.days_of_week}")
             
+            logger.debug(f"No active schedules found for camera {camera_id}")
             return None
         except Exception as e:
-            logger.error(f"Error checking active schedule: {e}")
+            logger.error(f"Error checking active schedule: {e}", exc_info=True)
             return None
     
     def reload_all_schedules(self):
