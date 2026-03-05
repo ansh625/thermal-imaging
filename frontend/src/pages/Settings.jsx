@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import Navbar from '../components/Navbar';
-import { User, Lock, Bell, Database } from 'lucide-react';
+import { User, Lock } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
 
@@ -153,8 +153,6 @@ export default function Settings() {
               {[
                 { id: 'profile', label: 'Profile', icon: User },
                 { id: 'security', label: 'Security', icon: Lock },
-                { id: 'notifications', label: 'Notifications', icon: Bell },
-                { id: 'storage', label: 'Storage', icon: Database },
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -297,23 +295,7 @@ export default function Settings() {
               </div>
             )}
 
-            {activeTab === 'notifications' && (
-              <div>
-                <h2 className="text-xl font-semibold text-white mb-6">
-                  Notification Preferences
-                </h2>
-                <p className="text-gray-400">Coming soon...</p>
-              </div>
-            )}
 
-            {activeTab === 'storage' && (
-              <div>
-                <h2 className="text-xl font-semibold text-white mb-6">
-                  Storage Management
-                </h2>
-                <p className="text-gray-400">Coming soon...</p>
-              </div>
-            )}
           </div>
         </div>
       </div>
