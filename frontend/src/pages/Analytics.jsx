@@ -5,7 +5,7 @@ import Navbar from '../components/Navbar';
 import { detectionAPI, dashboardAPI } from '../services/api';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
-import { Eye, TrendingUp, BarChart3, Image as ImageIcon } from 'lucide-react';
+import { Eye, TrendingUp, BarChart3, Image as ImageIcon, RefreshCw } from 'lucide-react';
 
 export default function Analytics() {
   const { token } = useAuthStore();
@@ -14,14 +14,23 @@ export default function Analytics() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('detections');
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (!token) navigate('/login');
     else loadData();
   }, [token, navigate]);
 
+  // Set up auto-refresh every 10 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadData();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   const loadData = async () => {
-    setLoading(true);
     try {
       const [detectionsRes, statsRes] = await Promise.all([
         detectionAPI.list(100),
@@ -30,10 +39,19 @@ export default function Analytics() {
       setDetections(detectionsRes.data.detections);
       setStats(statsRes.data);
     } catch (error) {
-      toast.error('Failed to load analytics');
+      console.error('Failed to load analytics:', error);
+      if (loading) {
+        toast.error('Failed to load analytics');
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  };
+
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
   };
 
   const getDetectionsByClass = () => {
@@ -49,9 +67,23 @@ export default function Analytics() {
       <Navbar />
       
       <div className="p-6">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-white mb-2">Analytics</h1>
-          <p className="text-gray-400">View detection statistics and insights</p>
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-white mb-2">Analytics</h1>
+            <p className="text-gray-400">View detection statistics and insights</p>
+          </div>
+          <button
+            onClick={handleManualRefresh}
+            disabled={refreshing || loading}
+            className={`p-2 rounded-xl border border-white/10 transition-all ${
+              refreshing || loading
+                ? 'bg-primary-500/20 text-primary-400 animate-spin'
+                : 'hover:border-primary-500/50 text-gray-400 hover:text-primary-400'
+            }`}
+            title="Refresh detections"
+          >
+            <RefreshCw size={24} />
+          </button>
         </div>
 
         {loading ? (

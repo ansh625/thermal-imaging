@@ -757,18 +757,29 @@ def _save_detections_sync(camera_id: int, detections, frame):
             # Extract detections from YOLO format
             bbox = det.get("bbox", {})
             
+            # Save detection screenshot (cropped image of detected object)
+            screenshot_path = None
+            try:
+                screenshot_path = yolo_detector.save_detection(frame, det, output_dir="detections")
+                logger.debug(f"Saved detection screenshot: {screenshot_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save detection screenshot: {e}")
+            
             detection = Detection(
                 camera_id=camera_id,
-                label=det.get("class_name", "unknown"),
+                class_name=det.get("class_name", "unknown"),
                 confidence=det.get("confidence", 0.0),
-                x1=bbox.get("x1", 0),
-                y1=bbox.get("y1", 0),
-                x2=bbox.get("x2", 0),
-                y2=bbox.get("y2", 0),
+                bbox_x1=bbox.get("x1", 0),
+                bbox_y1=bbox.get("y1", 0),
+                bbox_x2=bbox.get("x2", 0),
+                bbox_y2=bbox.get("y2", 0),
+                screenshot_path=screenshot_path,
+                detected_at=datetime.utcnow()
             )
             db.add(detection)
 
         db.commit()
+        logger.info(f"Successfully saved {len(detections)} detections for camera {camera_id}")
 
     except Exception as e:
         db.rollback()

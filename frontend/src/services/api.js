@@ -56,8 +56,11 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+      // Only redirect to login if not already on login/signup/forgot-password page
+      if (!['/login', '/signup', '/forgot-password', '/reset-password'].includes(window.location.pathname)) {
+        localStorage.removeItem('token');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
