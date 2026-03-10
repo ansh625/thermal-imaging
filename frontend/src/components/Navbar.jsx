@@ -23,20 +23,30 @@ export default function Navbar() {
               className="flex items-center gap-6 group cursor-pointer"
               onClick={() => navigate('/dashboard')}
             >
-              {/* EXTRA BIG + TIGHT LOGO */}
+              {/* BIG LOGO (UNCHANGED SIZE) */}
               <div className="bg-white rounded-full w-32 h-32 flex items-center justify-center shadow-xl overflow-hidden transition-transform duration-300 group-hover:scale-105">
                 <img
                   src="/logo.png"
                   alt="Thermal Polaris Logo"
-                  className="w-30 h-30 object-contain"
+                  className="w-28 h-28 object-contain"
                 />
               </div>
 
               {/* Brand Text */}
               <div className="flex flex-col">
-                <h1 className="text-3xl font-display font-bold text-gradient leading-tight">
-                  Thermal Polaris Beta
-                </h1>
+                
+                {/* Title + Beta Badge */}
+                <div className="flex items-center gap-3">
+                  <h1 className="text-3xl font-display font-bold text-gradient leading-tight">
+                    Thermal Polaris
+                  </h1>
+
+                  {/* BETA BADGE */}
+                  <span className="px-2.5 py-1 text-xs font-semibold rounded-md bg-primary-500/20 text-primary-400 border border-primary-500/30 tracking-wide">
+                    BETA
+                  </span>
+                </div>
+
                 <p className="text-base text-gray-400 font-medium">
                   AI-Powered Thermal Monitoring System
                 </p>

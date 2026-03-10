@@ -944,10 +944,20 @@ async def download_recording(recording_id: int,
     if not os.path.exists(recording.storage_path):
         raise HTTPException(status_code=404, detail="File not found")
     
-    return FileResponse(
-        recording.storage_path,
-        filename=recording.filename,
-        media_type='video/mp4'
+    def iterfile():
+        with open(recording.storage_path, mode="rb") as file_like:
+            yield from file_like
+    
+    return StreamingResponse(
+        iterfile(),
+        media_type='video/mp4',
+        headers={
+            'Content-Disposition': f'attachment; filename="{recording.filename}"',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Credentials': 'true',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+        }
     )
 
 @app.delete("/api/recording/{recording_id}")
@@ -1038,7 +1048,17 @@ async def capture_screenshot(session_id: str,
         filename = f"{camera.name}_{timestamp}.jpg"
         filepath = os.path.join(screenshot_dir, filename)
         
-        cv2.imwrite(filepath, frame)
+        # Run YOLO detection and draw bounding boxes on the screenshot
+        screenshot_frame = frame.copy()
+        try:
+            detections = yolo_detector.detect(frame, confidence=0.5)
+            if detections:
+                screenshot_frame = yolo_detector.draw_detections(screenshot_frame, detections)
+                logger.debug(f"Detected {len(detections)} objects in screenshot")
+        except Exception as e:
+            logger.warning(f"Failed to run detection on screenshot: {e}")
+        
+        cv2.imwrite(filepath, screenshot_frame)
         
         logger.info(f"Screenshot saved: {filepath}")
         

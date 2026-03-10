@@ -30,9 +30,30 @@ export default function Recordings() {
     }
   };
 
-  const handleDownload = (recordingId, filename) => {
-    window.open(recordingAPI.download(recordingId), '_blank');
-    toast.success(`Downloading ${filename}`);
+  const handleDownload = async (recordingId, filename) => {
+    try {
+      const response = await recordingAPI.download(recordingId);
+      
+      // Create a blob URL from the response
+      const blob = new Blob([response.data], { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      
+      // Create a temporary link and trigger download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up the blob URL
+      URL.revokeObjectURL(url);
+      
+      toast.success(`Downloaded ${filename}`);
+    } catch (error) {
+      console.error('Download error:', error);
+      toast.error('Failed to download recording');
+    }
   };
 
   const handleDelete = async (recordingId) => {

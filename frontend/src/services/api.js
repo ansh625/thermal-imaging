@@ -122,7 +122,10 @@ export const recordingAPI = {
   stop: (sessionId) =>
     api.post('/recording/stop', null, { params: { session_id: sessionId } }),
   list: () => api.get('/recording/list'),
-  download: (recordingId) => `${API_URL}/recording/download/${recordingId}`,
+  download: (recordingId) => 
+    api.get(`/recording/download/${recordingId}`, {
+      responseType: 'blob',
+    }),
   delete: (recordingId) => api.delete(`/recording/${recordingId}`),
 };
 
