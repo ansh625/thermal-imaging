@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from typing import Optional, List, Dict
 from fastapi import Query
 from pydantic import BaseModel
@@ -35,6 +35,7 @@ from notification_service import notification_service
 from scheduler_service import scheduler_service
 from email_service import email_service
 from websocket_manager import websocket_manager
+from collections import defaultdict 
 
 app = FastAPI(title="CSIO ThermalStream API", version="2.0.0")
 
@@ -74,13 +75,12 @@ class CachedDetectionState:
 
 detection_cache = CachedDetectionState()
 
-
+origins=[
+        "http://localhost:5173"
+        ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        ],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1307,6 +1307,385 @@ async def health_check():
         "active_recordings": len(recording_manager.active_recordings)
     }
 
+
+#========================= ADVANCED ANALYTICS ====================
+
+@app.get("/api/analytics/advanced")
+async def get_advanced_analytics(
+    date_from: Optional[str] = Query(None, description= "Start date YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description = "End date YYYY-MM-DD"),
+    class_names: Optional[List[str]] = Query(None, description="Filter by object class"),
+    camera_ids: Optional[List[int]] = Query(None, description="Filter by camera IDs"),  
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+    
+):
+    """
+    Advanced analytics with filtering, aggregation, zone analysis,
+    activity heatmap, trend comparison, and smart insights.
+    All queries are scoped to the current user's cameras.
+    """
+    
+    # ______________ Base query scoped to current user's cameras_______________________________
+    #all detections from cameras belonging to current user
+    
+    base_q = (
+        db.query(Detection)
+        .join(Camera)
+        .filter(Camera.user_id == current_user.id)
+    )
+
+# ----------------------Apply filters ------------------------
+    if date_from:
+        try:
+            dt_from = datetime.fromisoformat(date_from)
+            base_q = base_q.filter(Detection.detected_at >= dt_from)
+        except ValueError:
+            raise HTTPException(status_code=400, detail= "Invalid date_from. Use YYYY-MM-DD format.")
+
+    if date_to:
+        try:
+            #include the full end day up to 23:59:59
+            dt_to = datetime.fromisoformat(date_to+"T23:59:59")
+            base_q = base_q.filter(Detection.detected_at <= dt_to)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date_to. Use YYYY-MM-DD format.")
+        
+    if class_names:
+        base_q = base_q.filter(Detection.class_name.in_(class_names))
+    
+    if camera_ids:
+        base_q = base_q.filter(Camera.id.in_(camera_ids))
+        
+        
+# Fetch all matching detections ordered by time (needed for gap analysis)
+    all_detections = base_q.order_by(Detection.detected_at.asc()).all()
+    total = len(all_detections)
+    
+    
+    #___________________ Single-pass aggregation __________________________________ 
+    
+    by_class: dict = defaultdict(int)
+    by_date: dict = defaultdict(int)
+    by_camera_meta: dict = defaultdict(lambda: {"count": 0, "name": "", "confs": []})
+    hour_counts: dict = defaultdict(int)
+    activity_grid: dict = defaultdict(int)    # key: (hour 0-23, weekday 0=Mon)
+    hourly_buckets: dict= defaultdict(int) # key: "YYYY-MM-DD HH:00"
+    
+    for det in all_detections: 
+        by_class[det.class_name] += 1
+        by_date[det.detected_at.strftime("%Y-%m-%d")] += 1
+        by_camera_meta[det.camera_id]["count"] += 1
+        by_camera_meta[det.camera_id]["name"] = (
+            det.camera.name if det.camera else f"Camera {det.camera_id}"
+        )
+        by_camera_meta[det.camera_id]["confs"].append(det.confidence)
+        hour_counts[det.detected_at.hour] += 1
+        activity_grid[(det.detected_at.hour, det.detected_at.weekday())] += 1 
+        hourly_buckets[det.detected_at.strftime("%Y-%m-%d %H:00")] += 1
+        
+        by_date_sorted = [{"date": k, "count": v} for k, v in sorted(by_date.items())]
+        
+        
+    #_________ 1. Detection Count Analytics ___________________________
+    
+    detection_counts = {
+        "total": total,
+        "by_class": [
+            {
+                "class_name": k,
+                "count": v,
+                "percentage": round(v / total * 100, 1) if total > 0 else 0
+            }
+            for k, v in sorted(by_class.items(), key=lambda x: x[1], reverse=True)
+        ],
+        "by_date": by_date_sorted
+    }
+    
+    
+    #___________ 2. Activity Intensity Heatmap (24 hours * 7 weekdays)____________________
+    activity_intensity = [
+        {"hour": h, "weekday": w, "count": activity_grid.get((h,w), 0)}
+        for h in range(24)
+        for w in range(7)
+    ]
+    
+    
+    #______ 3. Peak hours (sorted top 10)_____________________________
+    
+    peak_hours = sorted(
+        [
+            {"hour": h, "count": c, "label": f"{h:02d}:00"}
+            for h,c in hour_counts.items()
+        ],
+        key=lambda x:x["count"],
+        reverse= True
+    )[:10]
+    
+    
+    
+    #__________4. Zone analytics (3*3 grid assuming 1280*720 frame) _____________________
+    # zones mapped to (row,col) where row 0=top, col 0=left
+    
+    FRAME_W, FRAME_H = 1280, 720
+    ZONE_NAMES = {
+        (0,0): "Top-Left",
+        (0,1): "Top-Center",
+        (0,2): "Top-Right",
+        (1,0): "Mid-Left",
+        (1,1): "Mid-Center",
+        (1,2): "Mid-Right",
+        (2,0): "Bot-Left",
+        (2,1): "Bot-Center",
+        (2,2): "Bot-Right"
+    }
+    zone_counts: dict = defaultdict(int)
+    for day in all_detections:
+        cx = (det.bbox_x1 + det.bbox_x2) / 2
+        cy = (det.bbox_y1 + det.bbox_y2) / 2
+        col = min(int(cx / FRAME_W * 3), 2)
+        row = min(int(cy / FRAME_H * 3), 2)
+        zone_counts[ZONE_NAMES[(row, col)]] += 1
+    zone_analytics = [
+        {"zone": name, "count": zone_counts.get(name, 0)}
+        for name in ZONE_NAMES.values()
+    ]
+    
+    
+#__________5. Object-wise analysis ________________________
+
+    today_d = datetime.now(timezone.utc).date()
+    yesterday_d = today_d - timedelta(days=1)
+    object_analytics = []
+    for cls, count in sorted(by_class.items(), key=lambda x: x[1], reverse=True):
+        cls_dets = [d for d in all_detections if d.class_name == cls]
+        confs = [d.confidence for d in cls_dets]
+        avg_conf = sum(confs) / len(confs) if confs else 0
+        today_c = sum(1 for d in cls_dets if d.detected_at.date() == today_d)
+        yest_c = sum(1 for d in cls_dets if d.detected_at.date() == yesterday_d)
+        
+        object_analytics.append({
+            "class_name" : cls,
+            "count" : count, 
+            "percentage" : round(count / total * 100, 1) if total > 0 else 0,
+            "avg_confidence" : round(avg_conf * 100, 1),
+            "max_confidence" : round(max(confs) * 100, 1) if confs else 0,
+            "today_count" : today_c,
+            "yesterday_count" : yest_c,
+            "trand_pct" : round(((today_c - yest_c) / max(yest_c, 1)) * 100, 1)
+        })
+
+#__________6. Alert analytics (confidence >= 0.8, no separate model needed)____________
+
+    ALERT_THRESHOLD = 0.8
+    high_conf = [d for d in all_detections if d.confidence >= ALERT_THRESHOLD]
+    alert_by_class: dict = defaultdict(int)
+    for d in high_conf:
+        alert_by_class[d.class_name] += 1
+    alert_analytics = {
+        "total_alerts" : len(high_conf),
+        "threshold" : ALERT_THRESHOLD,
+        "by_class" : [
+            {"class_name": k, "count" : v}
+            for k,v in sorted(alert_by_class.items(), key= lambda x : x[1], reverse=True)
+        ],
+        "alert_rate_pct" : round(len(high_conf) / total * 100, 1) if total > 0 else 0
+        
+    }
+    
+#_________ 7. Camera-wise analytics __________________________
+
+    camera_analytics = []
+    for cam_id, meta in by_camera_meta.items():
+        confs = meta["confs"]
+        cam_dets = [d for d in all_detections if d.camera_id == cam_id]
+        last_ts = cam_dets[-1].detected_at if cam_dets else None
+        camera_analytics.append({
+            "camera_id" : cam_id,
+            "camera_name" : meta["name"],
+            "count" : meta["count"],
+            "avg_comfidence" : round(sum(confs) / len(confs) * 100, 1) if confs else 0,
+            "last_detection" : last_ts.strftime("%Y-%m-%d %H:%M") if last_ts else None
+        })
+    camera_analytics.sort(key=lambda x: x["count"], reverse=True)
+        
+#__________ 8. Trend analytics(today vs yesterday, this week vs last week) _____________
+    week_start = today_d - timedelta(days=today_d.weekday())
+    last_week_start = week_start - timedelta(days=7)
+    today_count = sum(1 for d in all_detections if d.detected_at.date() == today_d)
+    yest_count = sum(1 for d in all_detections if d.detected_at.date() == yesterday_d)
+    this_week = sum(1 for d in all_detections if d.detected_at.date() >= week_start) 
+    last_week = sum(1 for d in all_detections if d.detected_at.date() >= last_week_start and d.detected_at.date() < week_start)
+    last_week = sum(
+        1 for d in all_detections
+        if last_week_start <= d.detected_at.date()< week_start
+    )
+    trend_analytics = {
+        "today_count": today_count,
+        "yesterday_count": yest_count,
+        "day_change_pct" : round(((today_count - yest_count) / max(yest_count, 1)) * 100, 1),
+        "this_week" : this_week, 
+        "last_week" : last_week,
+        "week_change_pct" : round(((this_week - last_week) / max(last_week, 1)) * 100, 1),
+        "daily_series" : by_date_sorted[-30:] # last 30 days
+    } 
+    
+#________ 9. Average detection rate _________________________
+
+    if total > 1:
+        span_hours = max(
+            (all_detections[-1].detected_at - all_detections[0].detected_at).total_seconds()/3600,
+            1.0
+        )
+        avg_rate = round(total / span_hours, 2)
+    else: 
+        avg_rate = float(total)
+        
+#____________10. No-activity periods (consecutive gaps >= 30 minutes)______________________________
+    GAP_THRESHOLD_MINUTES = 30
+    no_activity_periods = []
+    if len(all_detections) > 1:
+        for i in range(1, len(all_detections)):
+            gap_min = (
+                all_detections[i].detected_at  - all_detections[i-1].detected_at
+            ).total_seconds() / 60
+            if gap_min >= GAP_THRESHOLD_MINUTES:
+                no_activity_periods.append({
+                    "from": all_detections[i-1].detected_at.strftime("%Y-%m-%d %H:%M"),
+                    "to": all_detections[i].detected_at.strftime("%Y-%m-%d %H:%M"),
+                    "duration_minutes": round(gap_min, 1)
+                })
+    no_activity_periods.sort(key=lambda x: x["duration_minutes"], reverse=True)
+
+
+# ___ 11. Timeline chart (houly buckets for graph plotting)___________________________
+
+    timeline_chart = [
+        {"time": k, "count": v}
+        for k, v in sorted(hourly_buckets.items())
+    ]
+    
+#____ 12. Smart insights (auto-generated)_________________________
+
+    insights = []
+    if total == 0:
+        insights.append({
+            "type": "info",
+            "text": "No detections found for the selected filters."
+        })
+    else:
+        #Most detected class
+        if by_class:
+            top_cls = max(by_class, key=by_class.get)
+            pct = round(by_class[top_cls] / total * 100, 1)
+            insights.append({
+                "type": "info",
+                "text": f"'{top_cls.capitalize()}' is the most detected object - {by_class[top_cls]} detections ({pct}% of total activity)."
+            })
+        
+        #Peak hours
+        if peak_hours:
+            ph = peak_hours[0]
+            insights.append({
+                "type": "info",
+                "text": f"Peak detection hour is {ph['label']} with {ph['count']} detections."
+            })
+            
+        # Day-over-day trend 
+        
+        if yest_count > 0:
+            if today_count > yest_count:
+                direction = "up"
+                w = "warning"
+            elif today_count < yest_count:
+                direction = "down"
+                w = "success"
+            else:
+                direction = "unchanged"
+                t = "info"
+            pct = round(abs(trend_analytics["day_change_pct"]))
+            
+            if direction == "unchanged":
+                insights.append({
+                 "type": t,
+                 "text": f"Activity remained unchanged compared to yesterday ({today_count} detections)."
+            })
+            else:
+                insights.append({
+                 "type": w,
+                 "text": f" Activity is {direction} {pct}% today vs yesterday ({today_count} vs {yest_count} detections)"
+            })
+        
+        elif today_count > 0:
+            insights.append({
+                "type": "info",
+                "text": f"{today_count} new detections recorded today (no data for yesterday to compare)"
+            })
+            
+        # High confidence alerts 
+        if len(high_conf) > 0:
+            insights.append({
+                "type": "warning",
+                "text": f"{len(high_conf)} high-confidence alerts detected (>= {int(ALERT_THRESHOLD*100)}% confidence). Review these events."
+            })    
+
+        # Longest quiet period
+        if no_activity_periods:
+            lg = no_activity_periods[0]
+            insights.append({
+                "type": "info",
+                "text": f"Longest quiet gap: {lg['duration_minutes']} min (from{lg['from']} to {lg['to']})."
+            })
+    
+        # Most active camera
+        if camera_analytics:
+            top_cam = camera_analytics[0]
+            insights.append({
+                "type": "info",
+                "text": f"Most active camera is '{top_cam['camera_name']} with {top_cam['count']} detections."
+            })
+
+        # Busiest Zone
+        if zone_counts:
+            top_zone = max(zone_counts, key=zone_counts.get)
+            insights.append({
+                "type" : "info",
+                "text": f"Highest activity zone: '{top_zone}' ({zone_counts[top_zone]} detections)."
+            })
+            
+        #Low confidence warning 
+        low_con = [d for d in all_detections if d.confidence <0.3]
+        if len(low_con) / total * 0.3:
+            insights.append({
+                "type": "warning",
+                "text": f"{len(low_con)} detections ({round(len(low_con)/total*100,2)}%) have confidence below 30%. Consider raising the detection threshold."
+            })
+        
+        # Response
+        return{
+            "total" : total,
+            "filters_applied" : {
+                "date_from" : date_from,
+                "date_to" : date_to,
+                "class_names" : class_names,
+                "camera_ids" : camera_ids
+            },
+            "detection_counts" : detection_counts,
+            "activity_intensity" : activity_intensity,
+            "peak_hours" : peak_hours,
+            "zone_analytics" : zone_analytics,
+            "object_analytics" : object_analytics,
+            "alert_analytics" : alert_analytics,
+            "camera_analytics" : camera_analytics,
+            "trend_analytics" : trend_analytics,
+            "average_detection_rate_per_hour" : avg_rate,
+            "no_activity_periods" : no_activity_periods[:10], # top 10 longest gaps
+            "timeline_chart" : timeline_chart,
+            "smart_insights" : insights
+        }
+    
+            
+        
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
