@@ -10,7 +10,7 @@ import Dashboard from './pages/Dashboard';
 import Cameras from './pages/Cameras';
 import Recordings from './pages/Recordings';
 import Schedules from './pages/Schedules';
-import Analytics from './pages/Analytics';
+import Analytics from './pages/AdvancedAnalytics';
 import Settings from './pages/Settings';
 
 import { useAuthStore } from './store/authStore';
