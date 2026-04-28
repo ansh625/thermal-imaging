@@ -1,0 +1,180 @@
+THERMAL POLARIS SYSTEM ARCHITECTURE
+(FastAPI = API Layer + Backend Combined)
+
+                                      USER
+                                       │
+                                       ▼
+
++---------------------------------------------+
+|                  FRONTEND                   |
+|               React / Vite SPA              |
+|---------------------------------------------|
+| Core Files:                                 |
+|  frontend/index.html                        |
+|  frontend/package.json                      |
+|  frontend/package-lock.json                 |
+|  frontend/vite.config.js                    |
+|  frontend/tailwind.config.js                |
+|  frontend/postcss.config.js                 |
+|  frontend/eslint.config.js                  |
+|  frontend/.prettierrc                       |
+|  frontend/.gitignore                        |
+|  frontend/README.md                         |
+|---------------------------------------------|
+| Source (src/):                              |
+|  App.jsx, main.jsx, index.css               |
+|  store/: authStore.js, cameraStore.js       |
+|  services/: api.js, notifications.js,       |
+|            websocket.js                     |
+|  hooks/: useNotifications.js,               |
+|         useRealTimeData.js                  |
+|  components/: Navbar, VideoPlayer, etc.     |
+|  pages/: Dashboard, Analytics, Cameras,     |
+|         Recordings, Schedules, Settings,    |
+|         Login, Signup, ForgotPassword, etc. |
+|---------------------------------------------|
+| Assets:                                     |
+|  assets/react.svg                           |
+|  public/vite.svg, logo.png                  |
++------------------------+--------------------+
+                         │
+                 HTTPS / JSON APIs
+                         │
+                         ▼
++--------------------------------------------------------------------------+
+|                         BACKEND (FastAPI)                                |
+|--------------------------------------------------------------------------|
+| Entry Point:                                                             |
+|  backend/app.py                                                          |
+|--------------------------------------------------------------------------|
+| AUTH SYSTEM                                                             |
+|  backend/auth.py                                                        |
+|  • Login / Signup / JWT Tokens                                          |
+|  • Password Reset                                                       |
+|  • Protected Routes                                                     |
+|--------------------------------------------------------------------------|
+| DATABASE LAYER                                                          |
+|  backend/database.py                                                    |
+|  • SQLite (via SQLAlchemy ORM)                                          |
+|  • Models: Users, Cameras, Recordings, Detections, Schedules            |
+|--------------------------------------------------------------------------|
+| CORE SERVICES                                                           |
+|  • Request handling & routing (app.py)                                  |
+|  • Business logic                                                       |
+|  • Validation & error handling                                          |
+|--------------------------------------------------------------------------|
+| CAMERA MODULE                                                           |
+|  backend/camera_handler.py                                              |
+|  backend/yolo_detector.py                                               |
+|  backend/recording_manager.py                                           |
+|  • Live stream capture                                                  |
+|  • Object detection (YOLO)                                              |
+|  • Recording & snapshot handling                                        |
+|--------------------------------------------------------------------------|
+| ANALYTICS ENGINE                                                        |
+|  (inside app.py / services)                                             |
+|  • Aggregation of detections                                            |
+|  • Reports & statistics                                                 |
+|--------------------------------------------------------------------------|
+| EXTERNAL SERVICES                                                       |
+|  backend/email_service.py                                               |
+|  backend/notification_service.py                                        |
+|  backend/scheduler_service.py                                           |
+|  • Email sending                                                        |
+|  • Alerts / notifications                                               |
+|  • Background jobs                                                      |
+|--------------------------------------------------------------------------|
+| REALTIME / WEBSOCKETS                                                   |
+|  backend/websocket_manager.py                                           |
+|  • Live updates                                                         |
+|  • Notifications                                                        |
+|  • Camera status                                                        |
++-------------------------+----------------------------+-------------------+
+                          │                            │
+                          │                            │
+                          ▼                            ▼
+
+           +------------------------------+   +------------------------------+
+           |         DATABASE             |   |   STORAGE (LOCAL FILE SYS)   |
+           |------------------------------|   |------------------------------|
+           | SQLite                       |   | • Recorded Videos            |
+           | via SQLAlchemy ORM           |   | • Snapshots                  |
+           |------------------------------|   | • Logs                       |
+           | Tables:                      |   | • Exported Reports           |
+           | • Users                      |   +------------------------------+
+           | • Cameras                    |
+           | • Recordings                 |
+           | • Detections                 |
+           | • Schedules                  |
+           | • Notifications              |
+           +------------------------------+
+
+---------------------------------------------------------------------------
+ROOT / PROJECT FILES
+---------------------------------------------------------------------------
+
+- .gitignore
+- architecture.txt
+- FORGOT_PASSWORD_SETUP.md
+- PERFORMANCE_IMPROVEMENTS.md
+
+---------------------------------------------------------------------------
+BACKEND FILES
+---------------------------------------------------------------------------
+
+- backend/app.py
+- backend/auth.py
+- backend/database.py
+- backend/camera_handler.py
+- backend/recording_manager.py
+- backend/yolo_detector.py
+- backend/notification_service.py
+- backend/email_service.py
+- backend/scheduler_service.py
+- backend/websocket_manager.py
+- backend/requirements.txt
+- backend/ARCHITECTURE.md
+- backend/FUNCTIONALITY_GUIDE.md
+
+---------------------------------------------------------------------------
+FRONTEND FILES
+---------------------------------------------------------------------------
+
+- frontend/package.json
+- frontend/package-lock.json
+- frontend/vite.config.js
+- frontend/tailwind.config.js
+- frontend/postcss.config.js
+- frontend/eslint.config.js
+- frontend/.prettierrc
+- frontend/.gitignore
+- frontend/README.md
+- frontend/index.html
+- frontend/src/App.jsx
+- frontend/src/main.jsx
+- frontend/src/index.css
+- frontend/src/store/authStore.js
+- frontend/src/store/cameraStore.js
+- frontend/src/services/api.js
+- frontend/src/services/notifications.js
+- frontend/src/services/websocket.js
+- frontend/src/hooks/useNotifications.js
+- frontend/src/hooks/useRealTimeData.js
+- frontend/src/components/*
+- frontend/src/pages/*
+- frontend/src/assets/react.svg
+- frontend/public/vite.svg
+- frontend/public/logo.png
+
+---------------------------------------------------------------------------
+REQUEST FLOW (ANALYTICS EXAMPLE)
+---------------------------------------------------------------------------
+
+1. User opens Analytics page (Frontend)
+2. Frontend calls API via api.js
+3. Request hits backend/app.py
+4. Auth validated via auth.py
+5. Backend queries database.py
+6. Analytics computed (detections, recordings, etc.)
+7. Response sent to frontend
+8. UI renders charts (Analytics.jsx)
