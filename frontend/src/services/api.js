@@ -131,7 +131,7 @@ export const recordingAPI = {
 
 // Screenshot API
 export const screenshotAPI = {
-  capture: (sessionId) =>
+  capture: (sessionId) => 
     api.post('/screenshot/capture', null, {
       params: { session_id: sessionId },
     }),
@@ -163,6 +163,20 @@ export const scheduleAPI = {
 // Dashboard API
 export const dashboardAPI = {
   getStats: () => api.get('/dashboard/stats'),
+};
+
+//_______ Analytics API _____________//
+// Calls GET /api/analytics/advanced with optional filters. Array params (class_names)
+// camera_ids) are serialized correctly as repeated query params: ?class_names=person&class_names=car
+export const analyticsAPI = {
+  getAdvanced: (filters = {}) => { 
+    const params = {};
+    if (filters.date_from) params.date_from = filters.date_from;
+    if (filters.date_to) params.date_to = filters.date_to;
+    if (filters.class_names?.length) params.class_names = filters.class_names;
+    if (filters.camera_ids?.length) params.camera_ids = filters.camera_ids;
+    return api.get('/analytics/advanced', {params, paramsSerializer});
+  },
 };
 
 export default api;
