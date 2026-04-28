@@ -42,7 +42,7 @@ def create_access_token(
     data: dict,
     expires_delta: Optional[timedelta] = None
 ):
-    to_encode = data.copy()
+    to_encode = data.copy()    
 
     expire = datetime.utcnow() + (
         expires_delta
