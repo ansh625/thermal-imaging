@@ -1440,7 +1440,8 @@ async def get_advanced_analytics(
         (2,2): "Bot-Right"
     }
     zone_counts: dict = defaultdict(int)
-    for day in all_detections:
+
+    for det in all_detections:
         cx = (det.bbox_x1 + det.bbox_x2) / 2
         cy = (det.bbox_y1 + det.bbox_y2) / 2
         col = min(int(cx / FRAME_W * 3), 2)
