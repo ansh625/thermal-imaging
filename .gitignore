@@ -31,3 +31,9 @@ backend/*.db
 backend/detections/
 backend/recordings/
 backend/screenshots/
+
+#database 
+backend/thermalstream.db
+
+# Storage files
+backend/*.zip
