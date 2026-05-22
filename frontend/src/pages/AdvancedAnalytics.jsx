@@ -216,12 +216,12 @@ function OverviewTab({ data }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="glass-dark rounded-xl p-4 border border-white/10">
           <p className="text-xs text-gray-400 mb-1">Today</p>
-          <p className="text-2xl font-bold text-white">{trend_analytics.today}</p>
+          <p className="text-2xl font-bold text-white">{trend_analytics.today_count}</p>
           <TrendBadge pct={trend_analytics.day_change_pct} />
         </div>
         <div className="glass-dark rounded-xl p-4 border border-white/10">
           <p className="text-xs text-gray-400 mb-1">Yesterday</p>
-          <p className="text-2xl font-bold text-white">{trend_analytics.yesterday}</p>
+          <p className="text-2xl font-bold text-white">{trend_analytics.yesterday_count}</p>
           <p className="text-xs text-gray-500">detections</p>
         </div>
         <div className="glass-dark rounded-xl p-4 border border-white/10">
@@ -231,7 +231,7 @@ function OverviewTab({ data }) {
         </div>
         <div className="glass-dark rounded-xl p-4 border border-white/10">
           <p className="text-xs text-gray-400 mb-1">Avg Rate</p>
-          <p className="text-2xl font-bold text-white">{avg_detection_rate_per_hour}</p>
+          <p className="text-2xl font-bold text-white">{trend_analytics.avg_detection_rate_per_hour}</p>
           <p className="text-xs text-gray-500">per hour</p>
         </div>
       </div>
@@ -410,7 +410,7 @@ function ZonesTab({ data }) {
 
   const ZONE_ORDER = [
     ['Top-Left', 'Top-Center', 'Top-Right'],
-    ['Mid-Left', 'Center',     'Mid-Right'],
+    ['Mid-Left', 'Mid-Center', 'Mid-Right'],
     ['Bot-Left', 'Bot-Center', 'Bot-Right']
   ];
 
