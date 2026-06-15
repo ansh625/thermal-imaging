@@ -8,6 +8,9 @@ from datetime import timedelta, datetime, timezone
 from typing import Optional, List, Dict
 from fastapi import Query
 from pydantic import BaseModel
+from pydantic import BaseModel as _BaseModel
+from typing import Optional as _Optional
+from starlette.websockets import WebSocketDisconnect
 import os
 import uuid
 import cv2
@@ -31,6 +34,7 @@ from auth import (authenticate_user, create_access_token, get_current_active_use
 from camera_handler import camera_manager
 from yolo_detector import yolo_detector
 from recording_manager import recording_manager
+from smart_recording_manager import smart_recording_manager 
 from notification_service import notification_service
 from scheduler_service import scheduler_service
 from email_service import email_service
@@ -117,6 +121,7 @@ async def startup():
     init_db()
     scheduler_service.reload_all_schedules()
     calculate_storage()
+    smart_recording_manager.set_db_factory(SessionLocal)
     print("✅ CSIO ThermalStream API Started")
 
 # ==================== REQUEST MODELS ====================
@@ -587,7 +592,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """WebSocket video streaming - optimized for fast startup"""
     try:
         await websocket.accept()
-        
+        logger.warning(f"ENTERED VIDEO WS: {session_id}")
         detection_enabled = True  # Enable detection by default
         detection_confidence = 0.5
         db = next(get_db())
@@ -596,6 +601,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         
         # Get camera session with fast fail
         camera_session = camera_manager.get_session(session_id)
+        logger.warning(f"CAMERA SESSION: {camera_session}")
         if not camera_session or not camera_session.connected:
             await websocket.close(code=1008, reason="Camera not connected")
             return
@@ -642,11 +648,24 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             "resolution": "1280x720"
         })
         
+        smart_recording_manager.init_session(
+            session_id=session_id,
+            camera_id=camera.id,
+            user_id=camera.user_id,
+            fps=camera_session.fps,
+            camera_name=camera.name
+        )
+        
         DETECTION_INTERVAL = 3  # Run detection every 3 frames
         frame_skip_count = 0
         
         try:
+            logger.info("STREAM LOOP START")
+            logger.warning(
+    f"START STREAM: running={camera_session.is_running}, connected={camera_session.connected}"
+)
             while camera_session.is_running and camera_session.connected:
+                detections = []
                 # Non-blocking check for client messages
                 try:
                     message = await asyncio.wait_for(websocket.receive_json(), timeout=0.001)
@@ -658,11 +677,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         logger.info(f"Detection {'enabled' if detection_enabled else 'disabled'}")
                 except asyncio.TimeoutError:
                     pass
-                except Exception as e:
-                    logger.warning(f"Error receiving message: {e}")
+                except WebSocketDisconnect:
+                    logger.info("Client disconnected")
                     break
                 
+                except Exception as e:
+                    logger.warning(f"Recieve error: {e}")
+                    continue
+                
                 # Get frame
+                
                 frame = await camera_session.get_frame()
                 if frame is None:
                     await asyncio.sleep(0.001)
@@ -715,11 +739,18 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     if cached:
                         recording_frame = yolo_detector.draw_detections(recording_frame, cached)
                     
-                    # Write to recording if active
+                    # Smart event driven recording
+                    smart_recording_manager.push_frame(
+                        session_id,
+                        recording_frame,
+                        detections if detection_enabled else None,
+                    )
+                    
                     if recording_manager.is_recording(session_id):
                         recording_manager.write_frame(session_id, recording_frame)
                     
                     # Send frame
+                    
                     await websocket.send_json(message)
                     
                 except Exception as e:
@@ -728,8 +759,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         
         except Exception as e:
             logger.error(f"Stream error: {e}")
+            logger.warning(
+    f"END STREAM: running={camera_session.is_running}, connected={camera_session.connected}"
+)
         finally:
             logger.info(f"WebSocket stream ended for camera {camera.id}")
+            smart_recording_manager.close_session(session_id)
     
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
@@ -983,6 +1018,134 @@ async def delete_recording(recording_id: int,
     calculate_storage()
     
     return {"message": "Recording deleted"}
+
+
+# ==================== SMART RECORDING MANAGEMENT ====================
+ 
+
+ 
+class SmartRecordingConfigUpdate(_BaseModel):
+    """Request body to update smart recording parameters at runtime."""
+    pre_event_seconds: _Optional[float] = None
+    post_event_seconds: _Optional[float] = None
+    buffer_jpeg_quality: _Optional[int] = None
+    max_clip_age_days: _Optional[int] = None
+    max_storage_mb: _Optional[int] = None
+ 
+ 
+@app.get("/api/smart-recording/status")
+async def get_smart_recording_status(
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Return real-time status of all active smart recording sessions.
+    Shows current state (IDLE / EVENT_ACTIVE / FINALIZING), buffer sizes,
+    detection counts, and clips saved.
+    """
+    return {
+        "sessions": smart_recording_manager.get_all_statuses(),
+        "storage": smart_recording_manager.get_storage_stats(),
+        "config": {
+            "pre_event_seconds": smart_recording_manager.config.pre_event_seconds,
+            "post_event_seconds": smart_recording_manager.config.post_event_seconds,
+            "output_dir": smart_recording_manager.config.output_dir,
+            "max_clip_age_days": smart_recording_manager.config.max_clip_age_days,
+            "max_storage_mb": smart_recording_manager.config.max_storage_mb,
+        }
+    }
+ 
+ 
+@app.get("/api/smart-recording/status/{session_id}")
+async def get_smart_session_status(
+    session_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """Return smart recording status for a specific camera session."""
+    status = smart_recording_manager.get_status(session_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Session not registered")
+    return status
+ 
+ 
+@app.post("/api/smart-recording/config")
+async def update_smart_recording_config(
+    config_update: SmartRecordingConfigUpdate,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Update smart recording configuration at runtime.
+    Changes apply to NEW sessions; existing sessions keep their current config.
+    """
+    cfg = smart_recording_manager.config
+    if config_update.pre_event_seconds is not None:
+        cfg.pre_event_seconds = max(1.0, config_update.pre_event_seconds)
+    if config_update.post_event_seconds is not None:
+        cfg.post_event_seconds = max(1.0, config_update.post_event_seconds)
+    if config_update.buffer_jpeg_quality is not None:
+        cfg.buffer_jpeg_quality = max(10, min(95, config_update.buffer_jpeg_quality))
+    if config_update.max_clip_age_days is not None:
+        cfg.max_clip_age_days = max(0, config_update.max_clip_age_days)
+    if config_update.max_storage_mb is not None:
+        cfg.max_storage_mb = max(0, config_update.max_storage_mb)
+ 
+    return {
+        "message": "Config updated",
+        "config": {
+            "pre_event_seconds": cfg.pre_event_seconds,
+            "post_event_seconds": cfg.post_event_seconds,
+            "buffer_jpeg_quality": cfg.buffer_jpeg_quality,
+            "max_clip_age_days": cfg.max_clip_age_days,
+            "max_storage_mb": cfg.max_storage_mb,
+        }
+    }
+ 
+ 
+@app.post("/api/smart-recording/cleanup")
+async def trigger_storage_cleanup(
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Manually trigger storage cleanup.
+    Deletes clips older than max_clip_age_days and enforces max_storage_mb cap.
+    """
+    result = smart_recording_manager.run_cleanup()
+    return {
+        "message": "Cleanup complete",
+        "deleted_clips": result["deleted"],
+        "freed_mb": result["freed_mb"],
+    }
+ 
+ 
+@app.get("/api/smart-recording/clips")
+async def list_smart_clips(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """List all smart event clips (is_smart_clip=True recordings)."""
+    clips = (
+        db.query(Recording)
+        .filter(
+            Recording.user_id == current_user.id,
+            Recording.is_smart_clip == True,
+        )
+        .order_by(Recording.created_at.desc())
+        .all()
+    )
+    return {
+        "clips": [
+            {
+                "id": c.id,
+                "filename": c.filename,
+                "duration_seconds": c.duration_seconds,
+                "file_size_bytes": c.file_size_bytes,
+                "event_classes": c.event_classes or [],
+                "camera_id": c.camera_id,
+                "started_at": c.started_at,
+                "ended_at": c.ended_at,
+            }
+            for c in clips
+        ]
+    }
 
 # ==================== DETECTION MANAGEMENT ====================
 
