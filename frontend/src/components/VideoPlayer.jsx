@@ -6,7 +6,7 @@ export default function VideoPlayer({ zoom = 0 }) {
   const { sessionId, currentFrame, setFrame } = useCameraStore();
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
-  const [detectionEnabled, setDetectionEnabled] = useState(true);  // Enable detection by default
+  const [detectionEnabled, setDetectionEnabled] = useState(true); // Enable detection by default
   const [confidence, setConfidence] = useState(0.5);
   const [frameRate, setFrameRate] = useState(0);
   const [lastDetectionCount, setLastDetectionCount] = useState(0);
@@ -17,10 +17,13 @@ export default function VideoPlayer({ zoom = 0 }) {
   const [streamStarted, setStreamStarted] = useState(false);
   const reconnectAttemptsRef = useRef(0);
   const MAX_RECONNECT_ATTEMPTS = 5;
+  const reconnectTimeoutRef = useRef(null);
+  const manualCloseRef = useRef(false);
 
   useEffect(() => {
     if (!sessionId) return;
 
+    manualCloseRef.current = false;
     const connectWebSocket = () => {
       const ws = new WebSocket(`ws://localhost:8000/ws/video/${sessionId}`);
       wsRef.current = ws;
@@ -29,7 +32,7 @@ export default function VideoPlayer({ zoom = 0 }) {
         console.log('WebSocket connected');
         setIsConnected(true);
         reconnectAttemptsRef.current = 0; // Reset reconnect counter
-        
+
         // Send initial detection state (enabled by default)
         ws.send(
           JSON.stringify({
@@ -93,16 +96,25 @@ export default function VideoPlayer({ zoom = 0 }) {
 
       ws.onclose = () => {
         console.log('WebSocket closed');
+
         setIsConnected(false);
         setStreamStarted(false);
 
-        // Attempt to reconnect
+        if (manualCloseRef.current) {
+          console.log('Manual disconnect, skipping reconnect');
+          return;
+        }
+
         if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
           reconnectAttemptsRef.current++;
+
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connectWebSocket();
+          }, 2000 * reconnectAttemptsRef.current);
+
           console.log(
             `Reconnecting... (attempt ${reconnectAttemptsRef.current})`
           );
-          setTimeout(connectWebSocket, 2000 * reconnectAttemptsRef.current);
         }
       };
     };
@@ -110,7 +122,13 @@ export default function VideoPlayer({ zoom = 0 }) {
     connectWebSocket();
 
     return () => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      manualCloseRef.current = true;
+
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+
+      if (wsRef.current) {
         wsRef.current.close();
       }
     };
