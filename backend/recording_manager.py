@@ -52,7 +52,7 @@ class RecordingManager:
         Returns (fourcc_code, writer) or (None, None) if all fail
         """
         codec_options = [
-            ('H264', 'H264'),
+        
             ('mp4v', 'mp4v'),
             ('avc1', 'avc1'),
             ('DIVX', 'DIVX'),
@@ -103,6 +103,10 @@ class RecordingManager:
             
             # Select appropriate codec
             fourcc, writer = self._select_codec(filepath, fps, frame_size)
+            logger.info(
+    f"Writer opened={writer.isOpened()} "
+    f"fps={fps} size={frame_size}"
+)
             
             if writer is None:
                 logger.error(f"Failed to create video writer for {filepath}")
