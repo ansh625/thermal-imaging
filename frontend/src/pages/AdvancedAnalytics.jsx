@@ -123,7 +123,7 @@ function FilterPanel({ filters, setFilters, cameras, onApply, loading }) {
                 type="date"
                 value={filters.date_from}
                 onChange={e => setFilters(f => ({ ...f, date_from: e.target.value }))}
-                className="w-full bg-dark-400 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-primary-500 focus:outline-none"
+                className="w-full bg-dark-400 bor   der border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-primary-500 focus:outline-none"
               />
             </div>
             <div>
@@ -208,7 +208,7 @@ function FilterPanel({ filters, setFilters, cameras, onApply, loading }) {
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({ data }) {
-  const { trend_analytics, detection_counts, timeline_chart, avg_detection_rate_per_hour } = data;
+  const { trend_analytics, detection_counts, timeline_chart, average_detection_rate_per_hour } = data;
 
   return (
     <div className="space-y-6">
@@ -231,7 +231,7 @@ function OverviewTab({ data }) {
         </div>
         <div className="glass-dark rounded-xl p-4 border border-white/10">
           <p className="text-xs text-gray-400 mb-1">Avg Rate</p>
-          <p className="text-2xl font-bold text-white">{trend_analytics.avg_detection_rate_per_hour}</p>
+          <p className="text-2xl font-bold text-white">{average_detection_rate_per_hour}</p>
           <p className="text-xs text-gray-500">per hour</p>
         </div>
       </div>
