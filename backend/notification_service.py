@@ -25,7 +25,10 @@ class NotificationService:
                 if 'camera_id' in data:
                     query = query.filter(Notification.data["camera_id"].as_integer() == int(data["camera_id"]))
                 if 'session_id' in data:
-                    query = query.filter(Notification.data["session_id"].astext == str(data["session_id"]))
+                    query = query.filter(
+                        Notification.data["session_id"].as_string() ==
+                        str(data["session_id"])
+                    )
             existing = query.first()
             if existing:
                 logger.info(f"Duplicate notification prevented: {title} for user {user_id}")
