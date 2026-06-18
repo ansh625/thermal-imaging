@@ -25,7 +25,7 @@ class CameraSession:
         self.connected = False
         self.is_running = False
         self.last_frame = None
-        self.fps = 25
+        self.fps = 10
 
     async def connect(self):
         """Stable camera connection with support for USB, RTSP, IP, and RAW streams"""
@@ -130,8 +130,8 @@ class CameraSession:
 
             # Reduce startup delay
             self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
             # Warm up camera - try multiple times
             warmup_frames = 0
@@ -149,7 +149,7 @@ class CameraSession:
 
             # Get FPS
             fps = self.capture.get(cv2.CAP_PROP_FPS)
-            self.fps = fps if fps and fps > 0 else 25
+            self.fps = fps if fps and fps > 0 else 10
 
             self.connected = True
             self.is_running = True

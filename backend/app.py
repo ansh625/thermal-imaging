@@ -622,7 +622,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             filepath = recording_manager.start_recording(
                 session_id,
                 camera_session.fps,
-                (1280, 720),
+                (640, 480),
                 camera.name
             )
             if filepath:
@@ -847,7 +847,7 @@ async def start_recording(session_id: str,
     filepath = recording_manager.start_recording(
         session_id,
         camera_session.fps,
-        (1280, 720),
+        (640, 480),
         camera.name
     )
     
