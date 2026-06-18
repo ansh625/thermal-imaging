@@ -30,10 +30,10 @@ class SmartRecordingConfig:
 #------- Buffer sizing ---------
 
     #seconds of footage to keep for pre-recording
-    pre_event_seconds: float = 5.0
+    pre_event_seconds: float = 10.0
     
     #How many seconds AFTER the last detection to keep recording.
-    post_event_seconds: float = 5.0
+    post_event_seconds: float = 10.0
     
     # ------- Event-merging -------------------
     # if a new event arrives while the post-event countdown is still running.
@@ -245,9 +245,16 @@ class SmartSessionState:
         # ── Accumulators for the current event window ───────────────────────
         # Frames that accumulate DURING the event (after the event starts)
         self._event_frames: List[BufferedFrame] = []
+        self._pre_event_frames: List[BufferedFrame] = []
         self._event_detection_count: int = 0
         self._event_classes: set = set()
- 
+        
+        
+        # Used only for logging detection pauses/resumes
+        self._detection_paused_logged = False
+        
+        
+        
         # ── Rolling pre-event buffer ───────────────────────────────────────
         self.buffer = RollingFrameBuffer(
             fps=fps,
@@ -309,16 +316,24 @@ class SmartSessionState:
                 self.total_detections += len(detections)
  
                 if self._state == RecordingState.IDLE:
-                    # Transition IDLE → EVENT_ACTIVE
                     self._state = RecordingState.EVENT_ACTIVE
                     self._event_start_time = now
-                    self._event_frames = []          # reset accumulator
+                    self._pre_event_frames = self.buffer.snapshot()
+                    
+                    self._event_frames = []
                     self._event_detection_count = 0
                     self._event_classes = set()
+                    self._detection_paused_logged = False
+
                     logger.info(
-                        f"[SmartSession {self.session_id}] "
-                        f"EVENT START at {datetime.now().strftime('%H:%M:%S')}"
+                        f"[SmartSession {self.session_id}] DETECTION ACTIVE"
+                        f"(buffer_frames={len(self.buffer)})"
                     )
+                elif self._detection_paused_logged:
+                    logger.info(
+                        f"[SmartSession {self.session_id}] DETECTION RESUMED (merged)"
+                    )
+                    self._detection_paused_logged = False
  
                 # Extend post-event deadline (this is the merge mechanism)
                 self._last_event_time = now
@@ -330,9 +345,18 @@ class SmartSessionState:
                 self._event_frames.append(bf)
  
             elif self._state == RecordingState.EVENT_ACTIVE:
-                # ── No detection; check if post-event window has expired ───
-                self._event_frames.append(bf)  # still accumulate post-event tail
- 
+                self._event_frames.append(bf)
+
+                if (
+                    not self._detection_paused_logged
+                    and self._last_event_time
+                    and (now - self._last_event_time) > 1.0
+                ):
+                    logger.info(
+                        f"[SmartSession {self.session_id}] DETECTION PAUSED"
+                    )
+                    self._detection_paused_logged = True
+
                 deadline = (self._last_event_time or 0) + self.config.post_event_seconds
                 if now >= deadline:
                     # Post-event window closed → build clip and return it
@@ -352,7 +376,7 @@ class SmartSessionState:
             self._state = RecordingState.IDLE
             self._event_start_time = None
             self._last_event_time = None
-            self._event_frames = []
+            self._pre_event_frames = []
             self._event_detection_count = 0
             self._event_classes = set()
             self.clips_saved += 1
@@ -386,23 +410,19 @@ class SmartSessionState:
         relative to _event_start_time, avoiding double-counting frames that
         were pushed to both the buffer and _event_frames.
         """
-        cutoff = (self._event_start_time or time.time()) - self.config.pre_event_seconds
-        pre_frames = [
-            f for f in self.buffer.snapshot()
-            if f.timestamp >= cutoff
-            and f.timestamp < (self._event_start_time or time.time())
-        ]
  
         # _event_frames already contains from event_start onward (including
         # post-event tail), so just concatenate
-        all_frames = pre_frames + self._event_frames
+        all_frames = self._pre_event_frames + self._event_frames
  
         logger.info(
             f"[SmartSession {self.session_id}] "
-            f"Clip assembled: {len(pre_frames)} pre + "
-            f"{len(self._event_frames)} event = {len(all_frames)} total frames | "
-            f"classes={self._event_classes}"
-        )
+            f"MERGED CLIP READY ({len(all_frames)} frames, "
+            f"(pre_frames={len(self._pre_event_frames)}, "
+            f"event_frames={len(self._event_frames)}, "
+            f"total_frames={len(all_frames)}, "
+            f"classes={list(self._event_classes)})"
+        )       
         return all_frames
  
     def get_event_metadata(self) -> dict:
