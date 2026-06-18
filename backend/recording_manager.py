@@ -52,28 +52,40 @@ class RecordingManager:
         Returns (fourcc_code, writer) or (None, None) if all fail
         """
         codec_options = [
-        
-            ('mp4v', 'mp4v'),
+            ('H264', 'H264'),
             ('avc1', 'avc1'),
+            ('mp4v', 'mp4v'),
             ('DIVX', 'DIVX'),
         ]
         
         for codec_name, codec_code in codec_options:
             try:
+                logger.info(f"Trying codec={codec_name}")
+                logger.info(f"WRITER FPS = {fps}")
                 fourcc = cv2.VideoWriter_fourcc(*codec_code)
-                writer = self._get_video_writer(filepath, fourcc, fps, frame_size)
-                
+                writer = self._get_video_writer(
+                    filepath,
+                    fourcc,
+                    fps,
+                    frame_size
+                )
+
+                if writer is not None:
+                    logger.info(
+                        f"Codec {codec_name} -> "
+                        f"writer.isOpened()={writer.isOpened()}"
+                    )
+
                 if writer is not None and writer.isOpened():
-                    logger.info(f"Using codec: {codec_name} ({codec_code})")
+                    logger.info(f"Using codec: {codec_name}")
                     return (fourcc, writer)
-                
+
             except Exception as e:
-                logger.debug(f"Codec {codec_name} not available: {e}")
-                continue
+                logger.error(f"Codec {codec_name} failed: {e}")
         
         logger.error(f"No suitable video codec found on this system")
         return (None, None)
-    
+        
     def start_recording(self, session_id: str, fps: float, 
                        frame_size: tuple, camera_name: str = "camera") -> Optional[str]:
         """
