@@ -51,6 +51,8 @@ class WebSocketService {
     };
 
     ws.onmessage = (event) => {
+      //ADDED//////////////////////////////////////
+      console.log("FRAME RECEIVED", new Date().toLocalTimeString());
       try {
         const data = JSON.parse(event.data);
         onMessage(data);

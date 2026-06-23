@@ -212,9 +212,15 @@ class CameraSession:
         """Get a single frame from the camera"""
         if not self.capture or not self.capture.isOpened():
             return None
-
+        
         try:
-            ret, frame = self.capture.read()
+            ################################# ADDED
+            #start = time.time()
+            for _ in range(2):    
+                self.capture.grab()
+            ret, frame = self.capture.retrieve()
+            
+            #print(f"READ TIME = {time.time() - start:.3f}s")
             if ret and frame is not None:
                 self.last_frame = frame
                 return frame

@@ -183,7 +183,7 @@ export default function Analytics() {
                     >
                       {detection.screenshot_path ? (
                         <img
-                          src={`http://localhost:8000/${detection.screenshot_path}`}
+                          src={`http://1localhost:8000/${detection.screenshot_path}`}
                           alt={detection.class_name}
                           className="w-full h-40 object-cover"
                         />
