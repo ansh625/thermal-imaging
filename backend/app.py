@@ -80,7 +80,8 @@ class CachedDetectionState:
 detection_cache = CachedDetectionState()
 
 origins=[
-        "http://localhost:5173"
+        "http://localhost:5173",
+        "http://192.168.228.39:5173"
         ]
 app.add_middleware(
     CORSMiddleware,
@@ -686,35 +687,71 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     continue
                 
                 # Get frame
-                
+                loop_start = time.time()
                 frame = await camera_session.get_frame()
+                read_end = time.time()
                 if frame is None:
                     await asyncio.sleep(0.001)
                     continue
+        #################################### ADDED
+                cv2.putText( frame, 
+                            datetime.now().strftime("%H:%M:%S.%f")[:-3],
+                            (20,40), 
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1,
+                            (0, 255, 0),
+                            2)
                 
                 frame_count += 1
                 frame_skip_count += 1
                 
                 # Make a copy for recording (with detections drawn on it)
-                recording_frame = frame.copy()
+                recording_frame = frame
                 
-                # Minimal processing - only encode and send
-                try:
-                    # JPEG encoding with lower quality for speed
-                    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                # # Minimal processing - only encode and send
+                # try:
+                #     # JPEG encoding with lower quality for speed
+                #     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                #     frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                    
+                #     # Prepare message
+                #     message = {
+                #         "frame": frame_base64,
+                #         "fps": camera_session.fps,
+                #         "timestamp": time.time()
+                #     }
+                
+                try: 
+                    loop_start = time.time()
+                    
+                    _, buffer = cv2.imencode(
+                        '.jpg',
+                        frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, 75]
+                    )
+                    jpeg_end = time.time()
+                    
                     frame_base64 = base64.b64encode(buffer).decode('utf-8')
                     
-                    # Prepare message
+                    b64_end = time.time()
+                    
                     message = {
                         "frame": frame_base64,
-                        "fps": camera_session.fps,
+                        "fps" : camera_session.fps,
                         "timestamp": time.time()
                     }
                     
                     # YOLO Detection - run every N frames to avoid blocking
                     if detection_enabled and frame_skip_count % DETECTION_INTERVAL == 0:
+                    # if False:
                         try:
+                            #ADDED######################################
+                            det_start = time.time()
                             detections = yolo_detector.detect(frame, detection_confidence)
+                            det_end = time.time()
+                            print(f"Detection time = {(det_end-det_start)*1000:.2f} ms")
+                            
+                            
                             if detections:
                                 detection_cache.update(session_id, detections)
                                 message["detections"] = len(detections)
@@ -749,10 +786,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     if recording_manager.is_recording(session_id):
                         recording_manager.write_frame(session_id, recording_frame)
                     
-                    # Send frame
-                    
+                    # Send frame (frontend is receiving frames here)
+                    # print("Sending frame:", datetime.now().strftime("%H:%M:%S"))
+                    # await websocket.send_json(message)
+                    #Added ################################################
+                    # send_start = time.time()
                     await websocket.send_json(message)
-                    
+                    # send_end = time.time()
+                    # print(
+                    #     f"READ={read_end-loop_start:.4f}s "
+                    #     f"JPEG={jpeg_end-read_end:.4f}s "
+                    #     f"B64= {b64_end-jpeg_end:.4f}s "
+                    #     f"SEND= {send_end-send_start:.4f}s"
+                    # )
                 except Exception as e:
                     logger.error(f"Error encoding/sending frame: {e}")
                     break
