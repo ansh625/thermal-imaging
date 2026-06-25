@@ -1,0 +1,182 @@
+import axios from 'axios';
+
+const API_URL = 'http://localhost:8000/api';
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Custom params serializer for proper array handling
+const paramsSerializer = (params) => {
+  const parts = [];
+  const stringifyPrimitive = (v) => {
+    switch (typeof v) {
+      case 'string':
+        return v;
+      case 'boolean':
+        return v ? 'true' : 'false';
+      case 'number':
+        return isFinite(v) ? v : '';
+      default:
+        return '';
+    }
+  };
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === null || value === undefined) return;
+
+    if (Array.isArray(value)) {
+      value.forEach((v) => {
+        parts.push(
+          `${encodeURIComponent(key)}=${encodeURIComponent(stringifyPrimitive(v))}`
+        );
+      });
+    } else {
+      parts.push(
+        `${encodeURIComponent(key)}=${encodeURIComponent(stringifyPrimitive(value))}`
+      );
+    }
+  });
+
+  return parts.join('&');
+};
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Only redirect to login if not already on login/signup/forgot-password page
+      if (!['/login', '/signup', '/forgot-password', '/reset-password'].includes(window.location.pathname)) {
+        localStorage.removeItem('token');
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Auth API
+export const authAPI = {
+  signup: (data) => api.post('/auth/signup', null, { params: data }),
+  login: (data) =>
+    api.post('/auth/login', new URLSearchParams(data), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }),
+  getMe: () => api.get('/auth/me'),
+  forgotPassword: (email) =>
+    api.post('/auth/forgot-password', null, { params: { email } }),
+  getResetCode: (email) =>
+    api.get('/auth/forgot-password-code', { params: { email } }),
+  resetPassword: (token, newPassword) =>
+    api.post('/auth/reset-password', null, {
+      params: {
+        token,
+        new_password: newPassword,
+      },
+    }),
+  testEmail: (to_email) =>
+    api.post('/auth/test-email', null, { params: { to_email } }),
+};
+
+// Camera API
+export const cameraAPI = {
+  connect: (data) => {
+    // Ensure URL is converted to string
+    const params = {
+      url: String(data.url),
+      camera_id: data.camera_id || 1,
+    };
+    
+    // Add stream_type if provided
+    if (data.stream_type) {
+      params.stream_type = data.stream_type;
+    }
+    
+    return api.post('/camera/connect', null, { params });
+  },
+  disconnect: (data) => api.post('/camera/disconnect', null, { params: data }),
+  list: () => api.get('/camera/list'),
+  delete: (cameraId) => api.delete(`/camera/${cameraId}`),
+};
+
+// Recording API
+export const recordingAPI = {
+  start: (sessionId, scheduleId = null) => {
+    const params = { session_id: sessionId };
+    if (scheduleId) {
+      params.schedule_id = scheduleId;
+    }
+    return api.post('/recording/start', null, { params });
+  },
+  stop: (sessionId) =>
+    api.post('/recording/stop', null, { params: { session_id: sessionId } }),
+  list: () => api.get('/recording/list'),
+  download: (recordingId) => 
+    api.get(`/recording/download/${recordingId}`, {
+      responseType: 'blob',
+    }),
+  delete: (recordingId) => api.delete(`/recording/${recordingId}`),
+};
+
+// Screenshot API
+export const screenshotAPI = {
+  capture: (sessionId) => 
+    api.post('/screenshot/capture', null, {
+      params: { session_id: sessionId },
+    }),
+};
+
+// Detection API
+export const detectionAPI = {
+  list: (limit = 100) => api.get('/detection/list', { params: { limit } }),
+};
+
+// Schedule API
+export const scheduleAPI = {
+  create: (data) =>
+    api.post('/schedule/create', null, {
+      params: {
+        camera_id: parseInt(data.camera_id),
+        name: data.name,
+        start_time: data.start_time,
+        end_time: data.end_time,
+        days_of_week: data.days_of_week,
+      },
+      paramsSerializer,
+    }),
+  list: () => api.get('/schedule/list'),
+  toggle: (scheduleId) => api.put(`/schedule/${scheduleId}/toggle`),
+  delete: (scheduleId) => api.delete(`/schedule/${scheduleId}`),
+};
+
+// Dashboard API
+export const dashboardAPI = {
+  getStats: () => api.get('/dashboard/stats'),
+};
+
+//_______ Analytics API _____________//
+// Calls GET /api/analytics/advanced with optional filters. Array params (class_names)
+// camera_ids) are serialized correctly as repeated query params: ?class_names=person&class_names=car
+export const analyticsAPI = {
+  getAdvanced: (filters = {}) => { 
+    const params = {};
+    if (filters.date_from) params.date_from = filters.date_from;
+    if (filters.date_to) params.date_to = filters.date_to;
+    if (filters.class_names?.length) params.class_names = filters.class_names;
+    if (filters.camera_ids?.length) params.camera_ids = filters.camera_ids;
+    return api.get('/analytics/advanced', {params, paramsSerializer});
+  },
+};
+
+export default api;
