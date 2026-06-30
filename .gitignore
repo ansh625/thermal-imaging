@@ -31,6 +31,7 @@ backend/*.db
 backend/detections/
 backend/recordings/
 backend/screenshots/
+backend/smart_recordings/
 
 #database 
 backend/thermalstream.db

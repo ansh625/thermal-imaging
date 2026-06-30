@@ -467,7 +467,7 @@ async def connect_camera(url: str, camera_id: int = 1, stream_type: Optional[str
     camera.session_id = session_id
     camera.fps = session.fps
     camera.last_seen = datetime.utcnow()
-    camera.resolution = "1280x720"
+    camera.resolution = "640x480"
     db.commit()
     db.refresh(camera)
     
@@ -498,7 +498,7 @@ async def connect_camera(url: str, camera_id: int = 1, stream_type: Optional[str
         "camera_id": camera.id,
         "stream_type": connection_type,
         "fps": session.fps,
-        "resolution": "1280x720",
+        "resolution": "640x480",
         "status": "connected"
     }
 
@@ -646,7 +646,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         await websocket.send_json({
             "type": "stream_ready",
             "fps": camera_session.fps,
-            "resolution": "1280x720"
+            "resolution": "640x480"
         })
         
         smart_recording_manager.init_session(
@@ -745,7 +745,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     if detection_enabled and frame_skip_count % DETECTION_INTERVAL == 0:
                     # if False:
                         try:
-                            #ADDED######################################
                             det_start = time.time()
                             detections = yolo_detector.detect(frame, detection_confidence)
                             det_end = time.time()
@@ -1633,10 +1632,10 @@ async def get_advanced_analytics(
     
     
     
-    #__________4. Zone analytics (3*3 grid assuming 1280*720 frame) _____________________
+    #__________4. Zone analytics (3*3 grid assuming 640x480 frame) _____________________
     # zones mapped to (row,col) where row 0=top, col 0=left
     
-    FRAME_W, FRAME_H = 1280, 720
+    FRAME_W, FRAME_H = 640, 480
     ZONE_NAMES = {
         (0,0): "Top-Left",
         (0,1): "Top-Center",

@@ -421,7 +421,7 @@ function ZonesTab({ data }) {
           <MapPin size={18} className="text-teal-400" /> Zone Activity Map
         </h3>
         <p className="text-xs text-gray-500 mb-6">
-          Zones are based on the bounding box centre position within the 1280×720 frame.
+          Zones are based on the bounding box centre position within the 640x480 frame.
         </p>
 
         {/* Frame outline */}

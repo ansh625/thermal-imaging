@@ -372,7 +372,7 @@ This guide explains every functionality in the CSIO ThermalStream system.
 ### Resolution
 **Shows**: Video resolution
 
-**Typical**: 1280x720 (720p)
+**Typical**: 640x480
 
 ---
 

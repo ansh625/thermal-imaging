@@ -26,6 +26,8 @@ class CameraSession:
         self.is_running = False
         self.last_frame = None
         self.fps = 10
+        self.latest_frame = None
+        self.lock = asyncio.Lock()
 
     async def connect(self):
         """Stable camera connection with support for USB, RTSP, IP, and RAW streams"""
@@ -208,6 +210,18 @@ class CameraSession:
         
         return variations
 
+
+    # async def camera_loop(self):
+    #     """FAST camera loop - ONLY updates latest frames """
+    #     while self.is_running: 
+    #         try:
+    #             #aggressively drop old frames
+    #             for _ in range(2):
+    #                 self.capture.grab()
+                    
+    #             ret, frame = self.capture.retrieve()
+                
+    #             if ret and frame
     async def get_frame(self):
         """Get a single frame from the camera"""
         if not self.capture or not self.capture.isOpened():
@@ -219,6 +233,7 @@ class CameraSession:
             for _ in range(2):    
                 self.capture.grab()
             ret, frame = self.capture.retrieve()
+            
             
             #print(f"READ TIME = {time.time() - start:.3f}s")
             if ret and frame is not None:

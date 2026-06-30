@@ -7,6 +7,7 @@ import logging
 import time
 import asyncio
 import uuid
+import subprocess
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -51,7 +52,7 @@ class SmartRecordingConfig:
     
     #Video codec options tried in order until one works
     codec_priority: List[str] = field(default_factory= lambda: [
-        "mp4v", "avc1", "H264", "DIVX"
+       "H264" , "avc1", "mp4v", "DIVX"
     ])
     
     #Target FPS for saved clips(None= use camera FPS).
@@ -473,6 +474,9 @@ class ClipWriter:
             return None
  
         # ── Determine output parameters ────────────────────────────────────
+        logger.info(f"Frames received for writing: {len(frames)}")
+        logger.info(f"Session FPS: {session_state.fps}")
+        
         fps = self.config.output_fps or session_state.fps
         fps = max(fps, 1.0)
  
@@ -500,10 +504,16 @@ class ClipWriter:
         filepath = os.path.join(self.config.output_dir, filename)
         logger.info(f"SAVING TO: {os.path.abspath(filepath)}")
  
+ 
+        logger.info(
+            f"Recording resolution: {width}x{height}, fps={fps}"
+        )
         # ── Open VideoWriter with codec fallback ───────────────────────────
-        writer = self._open_writer(filepath, fps, frame_size)
-        if writer is None:
-            logger.error(f"ClipWriter: Could not open VideoWriter for {filepath}")
+        # ── Open FFmpeg encoder ────────────────────────────────────────────
+        writer = self._open_ffmpeg_process(filepath, fps, frame_size)
+
+        if writer is None or writer.stdin is None:
+            logger.error(f"ClipWriter: Could not start FFmpeg for {filepath}")
             return None
  
         # ── Write frames ───────────────────────────────────────────────────
@@ -528,7 +538,7 @@ class ClipWriter:
                 elif frame.shape[2] == 4:
                     frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
  
-                writer.write(frame)
+                writer.stdin.write(frame.tobytes())
                 written += 1
  
                 if bf.has_detections:
@@ -540,7 +550,9 @@ class ClipWriter:
                 logger.warning(f"ClipWriter: Frame write error: {e}")
                 continue
  
-        writer.release()
+        #writer.release()
+        writer.stdin.close()
+        writer.wait()
  
         # ── Validate output ────────────────────────────────────────────────
         file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
@@ -551,7 +563,8 @@ class ClipWriter:
         duration = written / fps if fps > 0 else 0
         started_at = datetime.fromtimestamp(frames[0].timestamp)
         ended_at = datetime.fromtimestamp(frames[-1].timestamp)
- 
+        actual_fps = len(frames) / duration
+
         record = ClipRecord(
             clip_id=clip_id,
             session_id=session_state.session_id,
@@ -572,7 +585,8 @@ class ClipWriter:
             f"✅ Clip saved: {filename} "
             f"({written} frames, {duration:.1f}s, "
             f"{file_size/1_048_576:.2f}MB, "
-            f"classes={sorted(event_classes)})"
+            f"classes={sorted(event_classes)}),"
+            f"Actual FPS={actual_fps:.2f}"
         )
         return record
  
@@ -586,11 +600,40 @@ class ClipWriter:
                 if writer.isOpened():
                     logger.debug(f"ClipWriter: Using codec '{codec}'")
                     return writer
+                logger.warning(f"Codec failed: {codec}")
                 writer.release()
             except Exception as e:
                 logger.debug(f"ClipWriter: Codec '{codec}' failed: {e}")
         return None
- 
+    
+    def _open_ffmpeg_process(self, filepath: str, fps: float, frame_size: Tuple[int, int]):
+        width, height = frame_size
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{width}x{height}",
+            "-r", str(fps),
+            "-i", "-",
+
+            "-an",
+
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+
+            filepath,
+        ]
+
+        return subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
  
 # ══════════════════════════════════════════════════════════════════════════════
 # BACKGROUND DB WRITER
